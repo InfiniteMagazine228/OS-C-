@@ -1,34 +1,62 @@
-// Định nghĩa cấu trúc một nút bấm trong trình Setup
-struct Button {
-    int x, y, width, height;
-    const char* text;
-    unsigned int color;
+name: Build Custom C++ OS ISO
 
-    void draw() {
-        // Gọi hàm vẽ hình chữ nhật lên màn hình
-        draw_rect(x, y, width, height, color);
-        // Gọi hàm vẽ chữ lên trên nút bấm
-        draw_string(x + 10, y + 5, text, 0xFFFFFF); 
-    }
-};
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
 
-extern "C" void kernel_main() {
-    // 1. Khởi tạo driver đồ họa (Ví dụ: đặt màn hình về 1024x768, 32-bit màu)
-    init_vesa_graphics();
+jobs:
+  build-os:
+    runs-on: ubuntu-24.04
 
-    // 2. Vẽ thanh Menu trên cùng (Top Bar) kiểu macOS/RedStar (Màu xám/đỏ)
-    draw_rect(0, 0, 1024, 30, 0xBB1111); // Màu đỏ RedStar
-    draw_string(20, 8, "OS Installer", 0xFFFFFF);
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-    // 3. Vẽ cửa sổ Setup chính (Window)
-    draw_rect(212, 134, 600, 500, 0xEEEEEE); // Nền xám nhạt macOS
+      - name: Install Compiler and ISO Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-i686-linux-gnu g++-i686-linux-gnu \
+                                 grub-pc-bin xorriso mtools
 
-    // 4. Tạo và vẽ nút "Tiếp tục"
-    Button next_button = { 680, 580, 100, 35, "Continue", 0x007AFF }; // Màu xanh dương macOS
-    next_button.draw();
+      - name: Compile Source Files
+        run: |
+          # Biên dịch file Assembly
+          i686-linux-gnu-as boot.s -o boot.o
+          
+          # Biên dịch file C++ (Tắt toàn bộ thư viện nền để chạy bare-metal)
+          i686-linux-gnu-g++ -c kernel.cpp -o kernel.o \
+            -ffreestanding -O2 -Wall -Wextra \
+            -fno-exceptions -fno-rtti
 
-    // Vòng lặp vô tận giữ hệ thống chạy và lắng nghe sự kiện chuột
-    while(1) {
-        // check_mouse_click();
-    }
-}
+      - name: Link Kernel Binary
+        run: |
+          i686-linux-gnu-gcc -T linker.ld -o myos.bin \
+            -ffreestanding -O2 -nostdlib boot.o kernel.o -lgcc
+
+      - name: Structure ISO Directory
+        run: |
+          mkdir -p isodir/boot/grub
+          cp myos.bin isodir/boot/myos.bin
+          
+          # Kiểm tra nếu chưa có grub.cfg thì tự động tạo file mặc định
+          if [ ! -f grub.cfg ]; then
+            cat <<EOF > isodir/boot/grub/grub.cfg
+          menuentry "My Custom C++ OS" {
+              multiboot /boot/myos.bin
+              boot
+          }
+          EOF
+          else
+            cp grub.cfg isodir/boot/grub/grub.cfg
+          fi
+
+      - name: Build Bootable ISO
+        run: |
+          grub-mkrescue -o myos.iso isodir
+
+      - name: Upload ISO Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: custom-os-iso
+          path: myos.iso

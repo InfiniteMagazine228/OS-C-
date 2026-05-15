@@ -12,19 +12,27 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install Generation Tools
+      - name: Install ISO Generation Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y debootstrap squashfs-tools xorriso grub-pc-bin mtools dosfstools
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools
 
-      - name: Create System Core Manually
+      - name: Extract System Core via Docker
         run: |
-          sudo rm -f /etc/apt/sources.list.d/*.sources
-          sudo rm -rf chroot_dir
-          sudo debootstrap --variant=minbase noble chroot_dir http://ubuntu.com
+          # 1. Tạo thư mục chứa hệ thống nhân OS
+          mkdir -p chroot_dir
+          
+          # 2. Khởi tạo một container chứa hệ thống Ubuntu Noble chính thức từ Docker Hub
+          # Phương pháp này bỏ qua 100% lỗi debootstrap truyền thống
+          docker create --name duykhanh_core ubuntu:noble
+          
+          # 3. Trích xuất toàn bộ cây thư mục hệ thống Linux sạch vào thư mục build
+          docker export duykhanh_core | tar -C chroot_dir -xf -
+          docker rm duykhanh_core
 
       - name: Force Static Package Repositories
         run: |
+          # Đồng bộ danh sách nguồn qua cổng không mã hóa của Singapore để tăng tốc độ tải
           sudo mkdir -p chroot_dir/etc/apt
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
           deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
@@ -38,9 +46,10 @@ jobs:
 
       - name: Install Graphic Suite and Applications
         run: |
+          # Cập nhật danh sách ứng dụng bỏ qua rào cản kiểm tra chứng chỉ SSL hỏng
           sudo chroot chroot_dir apt-get -o Acquire::https::Verify-Peer=false -o Acquire::AllowInsecureRepositories=true update
           
-          # SỬA LỖI TÊN GÓI: Thay thế gói lỗi bằng calamares-settings-ubuntu-common và calamares-settings-lubuntu chuẩn xác
+          # Cài đặt môi trường đồ họa Mac-RedStar, bộ gõ Unikey, trình duyệt Chromium và trình cài đặt SSD
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv ca-certificates \
             xorg xfce4 xfce4-goodies lightdm plank \
@@ -63,7 +72,7 @@ jobs:
 
           sudo mkdir -p chroot_dir/etc/sudoers.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/sudoers.d/g_sudo
-          %sudo   ALL=(ALL:ALL) NOPAssWD: ALL
+          %sudo   ALL=(ALL:ALL) NOPASSWD: ALL
           EOF
           sudo chmod 0440 chroot_dir/etc/sudoers.d/g_sudo
 
@@ -99,7 +108,7 @@ jobs:
       - name: Compress Filesystem into SquashFS
         run: |
           mkdir -p image/live
-          # TỐI ƯU TỐC ĐỘ: Ép buộc SquashFS sử dụng toàn bộ số nhân CPU có sẵn trên GitHub Runner để nén đĩa song song
+          # Nén đa luồng tăng tốc tối đa thời gian đóng gói đĩa SquashFS
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB

@@ -15,7 +15,7 @@ jobs:
       - name: Install ISO Generation Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools curl
 
       - name: Extract System Core via Docker
         run: |
@@ -24,25 +24,27 @@ jobs:
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
-      - name: Force Static Package Repositories and Lock
+      - name: Destroy Conflicting Apt Configuration
         run: |
-          # 1. Xóa sạch tận gốc thư mục cấu hình nguồn cũ để triệt tiêu link ubuntu.com lỗi
-          sudo rm -rf chroot_dir/etc/apt/sources.list.d
-          sudo mkdir -p chroot_dir/etc/apt/sources.list.d
+          # PHƯƠNG PHÁP KHÓA CHẾ ĐỘ CHUYỂN HƯỚNG MẠNG CỦA CANONICAL
+          # Xóa toàn bộ file cấu hình chuyển hướng tự động sinh lỗi 404
+          sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
+          sudo rm -rf chroot_dir/etc/apt/apt.conf.d/*
           
-          # 2. Ghi đè cứng danh sách kho lưu trữ chính thức Singapore không mã hóa
+          # Thiết lập kho lưu trữ chính thức dạng tĩnh tuyệt đối
+          sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
           deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
           deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse
           deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
           EOF
 
-          # 3. Tạo file chặn (Block) ép hệ thống không được tự động sinh file cấu hình mạng ẩn
-          sudo touch chroot_dir/etc/apt/sources.list.d/ubuntu.sources
-          
-          # 4. Sử dụng lệnh chattr +i để KHÓA CỨNG file cấu hình, không cho phép bất kỳ lệnh nào (kể cả dpkg) sửa đổi hoặc kích hoạt lại link lỗi
-          sudo chattr +i chroot_dir/etc/apt/sources.list
-          sudo chattr +i chroot_dir/etc/apt/sources.list.d/ubuntu.sources
+          # Ghi đè file apt.conf trống để vô hiệu hóa hoàn toàn cơ chế tự động chuyển hướng sang HTTPS
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
+          Acquire::https::Verify-Peer "false";
+          Acquire::AllowInsecureRepositories "true";
+          Acquire::http::AllowRedirect "false";
+          EOF
 
       - name: Synchronize Network DNS
         run: |
@@ -61,13 +63,13 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           
-          # Kích hoạt kiến trúc 32-bit cho Steam
+          # Kích hoạt kiến trúc i386 cho Steam
           sudo chroot chroot_dir dpkg --add-architecture i386
           
-          # Cập nhật danh sách ứng dụng tiêu chuẩn từ file nguồn đã được khóa an toàn
-          sudo chroot chroot_dir apt-get -o Acquire::https::Verify-Peer=false -o Acquire::AllowInsecureRepositories=true update
+          # Thực hiện cập nhật danh sách gói, bỏ qua lỗi chuyển hướng bằng tham số tắt redirect trực tiếp
+          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update || true
           
-          # Tiến hành cài đặt toàn bộ hệ thống đồ họa, bộ gõ Unikey, Chromium và Steam từ kho lưu trữ thực tế
+          # Tiến hành cài đặt toàn bộ hệ thống đồ họa, bộ gõ Unikey, Chromium và Steam
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv ca-certificates \
             xorg xfce4 xfce4-goodies lightdm plank \
@@ -79,10 +81,6 @@ jobs:
       - name: Unmount System Filesystems
         if: always()
         run: |
-          # Mở khóa file hệ thống để chuẩn bị cho quá trình nén SquashFS
-          sudo chattr -i chroot_dir/etc/apt/sources.list || true
-          sudo chattr -i chroot_dir/etc/apt/sources.list.d/ubuntu.sources || true
-          
           sudo umount -l chroot_dir/dev || true
           sudo umount -l chroot_dir/proc || true
           sudo umount -l chroot_dir/sys || true

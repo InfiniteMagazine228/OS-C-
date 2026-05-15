@@ -19,20 +19,13 @@ jobs:
 
       - name: Extract System Core via Docker
         run: |
-          # 1. Tạo thư mục chứa hệ thống nhân OS
           mkdir -p chroot_dir
-          
-          # 2. Khởi tạo một container chứa hệ thống Ubuntu Noble chính thức từ Docker Hub
-          # Phương pháp này bỏ qua 100% lỗi debootstrap truyền thống
           docker create --name duykhanh_core ubuntu:noble
-          
-          # 3. Trích xuất toàn bộ cây thư mục hệ thống Linux sạch vào thư mục build
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
       - name: Force Static Package Repositories
         run: |
-          # Đồng bộ danh sách nguồn qua cổng không mã hóa của Singapore để tăng tốc độ tải
           sudo mkdir -p chroot_dir/etc/apt
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
           deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
@@ -44,18 +37,39 @@ jobs:
         run: |
           sudo cp /etc/resolv.conf chroot_dir/etc/resolv.conf
 
+      - name: Fix Dev Null Permission and Mount System
+        run: |
+          sudo rm -f chroot_dir/dev/null
+          sudo mknod -m 666 chroot_dir/dev/null c 1 3
+          
+          sudo mount --bind /dev chroot_dir/dev
+          sudo mount --bind /proc chroot_dir/proc
+          sudo mount --bind /sys chroot_dir/sys
+
       - name: Install Graphic Suite and Applications
         run: |
-          # Cập nhật danh sách ứng dụng bỏ qua rào cản kiểm tra chứng chỉ SSL hỏng
+          export DEBIAN_FRONTEND=noninteractive
+          
+          # KÍCH HOẠT KIẾN TRÚC 32-BIT: Bắt buộc phải có để chạy được phần mềm Steam trên Linux
+          sudo chroot chroot_dir dpkg --add-architecture i386
+          
           sudo chroot chroot_dir apt-get -o Acquire::https::Verify-Peer=false -o Acquire::AllowInsecureRepositories=true update
           
-          # Cài đặt môi trường đồ họa Mac-RedStar, bộ gõ Unikey, trình duyệt Chromium và trình cài đặt SSD
+          # TÍCH HỢP THÊM ỨNG DỤNG: Đã điền thêm gói steam vào cuối danh sách cài đặt
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv ca-certificates \
             xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant chromium-browser \
             fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
-            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted curl git
+            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted curl git \
+            steam
+
+      - name: Unmount System Filesystems
+        if: always()
+        run: |
+          sudo umount -l chroot_dir/dev || true
+          sudo umount -l chroot_dir/proc || true
+          sudo umount -l chroot_dir/sys || true
 
       - name: Configure Auto-Login and User Account
         run: |
@@ -108,7 +122,6 @@ jobs:
       - name: Compress Filesystem into SquashFS
         run: |
           mkdir -p image/live
-          # Nén đa luồng tăng tốc tối đa thời gian đóng gói đĩa SquashFS
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB

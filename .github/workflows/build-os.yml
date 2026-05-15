@@ -1,4 +1,4 @@
-name: Build C++ OS ISO
+name: Build MacOS-RedStar Hybrid OS
 
 on:
   push:
@@ -6,42 +6,61 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-
+  build-iso:
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install Build Tools
+      - name: Install System Build Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-i686-linux-gnu g++-i686-linux-gnu \
-                                 grub-pc-bin xorriso mtools
+          sudo apt-get install -y live-build xorriso squashfs-tools
 
-      - name: Compile Assembly and C++
+      - name: Setup Live Build Environment
         run: |
-          # Biên dịch file assembly (.s)
-          i686-linux-gnu-as boot.s -o boot.o
+          mkdir my-os && cd my-os
+          lb config --architecture amd64 \
+                    --distribution noble \
+                    --binary-images iso-hybrid \
+                    --memtest none
+
+      - name: Customize OS Packages (Interface & Setup)
+        run: |
+          # Khai báo các gói phần mềm cần cài sẵn vào ISO
+          mkdir -p my-os/config/package-lists
+          cat <<EOF > my-os/config/package-lists/desktop.list.chroot
+          # Hệ thống nền và Giao diện đồ họa
+          xorg
+          xfce4
+          xfce4-goodies
+          plank
           
-          # Biên dịch file C++ với các cờ tắt thư viện chuẩn (freestanding)
-          i686-linux-gnu-g++ -c kernel.cpp -o kernel.o -ffreestanding -O2 -Wall -Wextra -fno-exceptions -fno-rtti
+          # Trình cài đặt đồ họa (Setup Wizard)
+          calamares
+          calamares-settings-ubuntu
           
-          # Liên kết tạo file kernel nhị phân .bin
-          i686-linux-gnu-gcc -T linker.ld -o myos.bin -ffreestanding -O2 -nostdlib boot.o kernel.o -lgcc
+          # Tiện ích bổ sung cấu hình giống macOS
+          valpanel
+          lightdm
+EOF
 
-      - name: Prepare ISO Directory Structure
+      - name: Inject Custom Themes and Backgrounds
         run: |
-          mkdir -p isodir/boot/grub
-          cp myos.bin isodir/boot/myos.bin
-          cp grub.cfg isodir/boot/grub/grub.cfg
+          # Tạo thư mục chứa file cấu hình hệ thống đồ họa của ISO
+          mkdir -p my-os/config/includes.chroot/etc/skel/.config/plank/dock1
+          mkdir -p my-os/config/includes.chroot/usr/share/backgrounds/
+          
+          # [Bước tùy biến]: Bạn có thể bỏ file ảnh nền RedStar OS hoặc script tự động chỉnh giao diện macOS vào đây.
+          echo "# Cấu hình tự khởi động các thanh Dock giống macOS" > my-os/config/includes.chroot/etc/skel/.desktop
 
-      - name: Generate Bootable ISO
+      - name: Build the OS ISO
         run: |
-          grub-mkrescue -o myos.iso isodir
+          cd my-os
+          sudo lb build
 
-      - name: Upload ISO Artifact
+      - name: Upload Finished ISO
         uses: actions/upload-artifact@v4
         with:
-          name: custom-cpp-os-iso
-          path: myos.iso
+          name: macOS-RedStar-OS-ISO
+          path: my-os/*.iso

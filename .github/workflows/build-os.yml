@@ -15,7 +15,7 @@ jobs:
       - name: Install ISO Generation Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools curl
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget
 
       - name: Extract System Core via Docker
         run: |
@@ -26,12 +26,9 @@ jobs:
 
       - name: Destroy Conflicting Apt Configuration
         run: |
-          # PHƯƠNG PHÁP KHÓA CHẾ ĐỘ CHUYỂN HƯỚNG MẠNG CỦA CANONICAL
-          # Xóa toàn bộ file cấu hình chuyển hướng tự động sinh lỗi 404
           sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
           sudo rm -rf chroot_dir/etc/apt/apt.conf.d/*
           
-          # Thiết lập kho lưu trữ chính thức dạng tĩnh tuyệt đối
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
           deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
@@ -39,11 +36,24 @@ jobs:
           deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
           EOF
 
-          # Ghi đè file apt.conf trống để vô hiệu hóa hoàn toàn cơ chế tự động chuyển hướng sang HTTPS
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
           Acquire::http::AllowRedirect "false";
+          EOF
+
+      - name: Add Native Firefox PPA
+        run: |
+          # Thêm kho lưu trữ chính thức của Mozilla để cài đặt Firefox dạng DEB thuần, không dùng Snap
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/mozillateam.list
+          deb [trusted=yes] http://launchpadcontent.net noble main
+          EOF
+          
+          # Thiết lập độ ưu tiên để APT chọn Firefox bản DEB thay vì bản Snap của Ubuntu
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/preferences.d/99mozillateam
+          Package: firefox*
+          Pin: release o=LP-PPA-mozillateam
+          Pin-Priority: 1001
           EOF
 
       - name: Synchronize Network DNS
@@ -59,24 +69,31 @@ jobs:
           sudo mount --bind /proc chroot_dir/proc
           sudo mount --bind /sys chroot_dir/sys
 
-      - name: Install Graphic Suite and Applications
+      - name: Install Graphic Suite and Core Applications
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          
-          # Kích hoạt kiến trúc i386 cho Steam
-          sudo chroot chroot_dir dpkg --add-architecture i386
-          
-          # Thực hiện cập nhật danh sách gói, bỏ qua lỗi chuyển hướng bằng tham số tắt redirect trực tiếp
           sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update || true
           
-          # Tiến hành cài đặt toàn bộ hệ thống đồ họa, bộ gõ Unikey, Chromium và Steam
+          # Loại bỏ các gói bị dính cơ chế ép Snap (chromium-browser, steam)
+          # Thay bằng Firefox (bản native DEB), VLC, LibreOffice, Unikey
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv ca-certificates \
             xorg xfce4 xfce4-goodies lightdm plank \
-            network-manager network-manager-gnome wpasupplicant chromium-browser \
+            network-manager network-manager-gnome wpasupplicant firefox \
             fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
-            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted curl git \
-            steam
+            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted curl git
+
+      - name: Download and Inject Steam Standalone Package
+        run: |
+          # Tải trực tiếp gói cài đặt Steam chính thức (.deb) từ Valve để bỏ qua Snap hoàn toàn
+          wget -q https://steampowered.com -O chroot_dir/tmp/steam.deb
+          
+          # Thêm kiến trúc 32-bit và cài đặt trực tiếp file .deb vừa tải vào nhân hệ thống
+          export DEBIAN_FRONTEND=noninteractive
+          sudo chroot chroot_dir dpkg --add-architecture i386
+          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update || true
+          sudo chroot chroot_dir apt-get install -y -f --allow-unauthenticated --no-install-recommends /tmp/steam.deb
+          sudo rm -f chroot_dir/tmp/steam.deb
 
       - name: Unmount System Filesystems
         if: always()

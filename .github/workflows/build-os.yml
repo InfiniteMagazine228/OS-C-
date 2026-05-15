@@ -24,18 +24,12 @@ jobs:
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
-      - name: Force Static Package Repositories
+      - name: Clean Conflicting Configurations
         run: |
-          # XÓA FILE ẨN GÂY LỖI: Loại bỏ tận gốc file cấu hình mặc định của Docker chèn link https://ubuntu.com
+          # Xóa sạch toàn bộ các file cấu hình nguồn cũ để tránh xung đột
           sudo rm -f chroot_dir/etc/apt/sources.list.d/*.sources
-          
-          # Thiết lập kho lưu trữ chính thức dải IP Singapore tĩnh không mã hóa
-          sudo mkdir -p chroot_dir/etc/apt
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
-          deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse
-          deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
-          EOF
+          sudo rm -f chroot_dir/etc/apt/sources.list
+          sudo touch chroot_dir/etc/apt/sources.list
 
       - name: Synchronize Network DNS
         run: |
@@ -54,14 +48,17 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           
-          # Kích hoạt cấu trúc phần cứng 32-bit cho Steam
+          # Kích hoạt kiến trúc 32-bit cho Steam
           sudo chroot chroot_dir dpkg --add-architecture i386
           
-          # Cập nhật danh sách phần mềm từ kho lưu trữ Singapore tĩnh
-          sudo chroot chroot_dir apt-get -o Acquire::https::Verify-Peer=false -o Acquire::AllowInsecureRepositories=true update
+          # ĐỊNH NGHĨA CHUỖI KHO LƯU TRỮ TĨNH ĐỂ ÉP LỆNH CHẠY COPIED INLINE
+          REPOS="deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse\ndeb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse\ndeb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse"
           
-          # Cài đặt toàn bộ môi trường đồ họa, bộ gõ Unikey, Chromium và Steam
-          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
+          # Cập nhật danh sách phần mềm bằng cách truyền tham số ghi đè trực tiếp lên RAM của APT
+          echo -e $REPOS | sudo chroot chroot_dir apt-get -o Dir::Etc::sourcelist=/dev/stdin -o Acquire::https::Verify-Peer=false update
+          
+          # Ép lệnh cài đặt bỏ qua file cấu hình lỗi trên đĩa và đọc danh sách kho từ chuỗi text trực tiếp
+          echo -e $REPOS | sudo chroot chroot_dir apt-get install -y -o Dir::Etc::sourcelist=/dev/stdin --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv ca-certificates \
             xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant chromium-browser \

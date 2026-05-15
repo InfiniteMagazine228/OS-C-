@@ -20,7 +20,7 @@ jobs:
           sudo apt-get clean
           sudo apt-get autoclean
           
-          echo "=== Chạy cập nhật hệ thống kèm cơ chế chống lỗi mạng ==="
+          echo "=== Chạy cập nhật hệ thống ==="
           sudo apt-get update \
             -o Acquire::Retries=5 \
             -o Acquire::http::No-Cache=true \
@@ -29,9 +29,10 @@ jobs:
       - name: Install All Boot Tools and Dependencies
         run: |
           echo "=== Cài đặt trình biên dịch và công cụ tạo ISO ==="
-          sudo apt-get install -y --fix-missing \
+          # Đã loại bỏ gói libisoburn để tránh lỗi hệ thống không tìm thấy
+          sudo apt-get install -y \
             gcc-i686-linux-gnu g++-i686-linux-gnu \
-            grub-pc-bin xorriso mtools dosfstools libisoburn
+            grub-pc-bin xorriso mtools dosfstools
 
       - name: Compile Source Files
         run: |

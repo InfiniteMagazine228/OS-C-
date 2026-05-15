@@ -12,28 +12,24 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install Base Environment Tools
+      - name: Install Generation Tools
         run: |
           sudo apt-get update
           sudo apt-get install -y debootstrap squashfs-tools xorriso grub-pc-bin mtools dosfstools
 
       - name: Create System Core Manually
         run: |
-          # BƯỚC KHẮC PHỤC TRIỆT ĐỂ: Xóa sạch toàn bộ cấu hình chuyển hướng mặc định bị lỗi của GitHub Actions
           sudo rm -f /etc/apt/sources.list.d/*.sources
           sudo rm -rf chroot_dir
-          
-          # Sử dụng debootstrap trỏ thẳng vào cổng phân phối tĩnh của Singapore
-          sudo debootstrap --variant=minbase noble chroot_dir http://sg.archive.ubuntu.com/ubuntu/
+          sudo debootstrap --variant=minbase noble chroot_dir http://ubuntu.com
 
       - name: Force Static Package Repositories
         run: |
-          # Tạo tệp tin danh sách nguồn tĩnh bên trong nhân OS, loại bỏ hoàn toàn chữ ubuntu.com lỗi
           sudo mkdir -p chroot_dir/etc/apt
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb [trusted=yes] http://sg.archive.ubuntu.com/ubuntu/ noble main restricted universe multiverse
-          deb [trusted=yes] http://sg.archive.ubuntu.com/ubuntu/ noble-updates main restricted universe multiverse
-          deb [trusted=yes] http://sg.archive.ubuntu.com/ubuntu/ noble-security main restricted universe multiverse
+          deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
+          deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse
+          deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
           EOF
 
       - name: Synchronize Network DNS
@@ -42,16 +38,15 @@ jobs:
 
       - name: Install Graphic Suite and Applications
         run: |
-          # Đồng bộ danh sách ứng dụng qua cổng bỏ qua chứng chỉ bảo mật SSL
           sudo chroot chroot_dir apt-get -o Acquire::https::Verify-Peer=false -o Acquire::AllowInsecureRepositories=true update
           
-          # Cài đặt toàn bộ môi trường Mac-RedStar, Chromium, bộ gõ Unikey và VLC
+          # SỬA LỖI TÊN GÓI: Thay thế gói lỗi bằng calamares-settings-ubuntu-common và calamares-settings-lubuntu chuẩn xác
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv ca-certificates \
             xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant chromium-browser \
             fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
-            calamares calamares-settings-ubuntu gparted curl git
+            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted curl git
 
       - name: Configure Auto-Login and User Account
         run: |
@@ -68,7 +63,7 @@ jobs:
 
           sudo mkdir -p chroot_dir/etc/sudoers.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/sudoers.d/g_sudo
-          %sudo   ALL=(ALL:ALL) NOPASSWD: ALL
+          %sudo   ALL=(ALL:ALL) NOPAssWD: ALL
           EOF
           sudo chmod 0440 chroot_dir/etc/sudoers.d/g_sudo
 
@@ -104,7 +99,8 @@ jobs:
       - name: Compress Filesystem into SquashFS
         run: |
           mkdir -p image/live
-          sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz
+          # TỐI ƯU TỐC ĐỘ: Ép buộc SquashFS sử dụng toàn bộ số nhân CPU có sẵn trên GitHub Runner để nén đĩa song song
+          sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB
         run: |

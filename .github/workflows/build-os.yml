@@ -28,61 +28,45 @@ jobs:
       - name: Define Core Applications and Drivers
         run: |
           mkdir -p duykhanh_os/config/package-lists
-          cat <<EOF > duykhanh_os/config/package-lists/desktop.list.chroot
-          # Giao diện nền và trình quản lý đăng nhập
+          cat <<'EOF' > duykhanh_os/config/package-lists/desktop.list.chroot
           xorg
           xfce4
           xfce4-goodies
           lightdm
-          
-          # Thanh ứng dụng Dock kiểu macOS
           plank
-          
-          # Driver mạng không dây (Wi-Fi), Âm thanh & Tiện ích kết nối
           network-manager
           network-manager-gnome
           wpasupplicant
           alsa-utils
           pulseaudio
           pavucontrol
-          
-          # Trình duyệt web và công cụ quản lý ổ đĩa SSD
           chromium-browser
           gparted
           curl
           git
-          
-          # BỘ GÕ TIẾNG VIỆT (Fcitx + Unikey)
           fcitx
           fcitx-unikey
           fcitx-config-gtk
-          
-          # CÁC ỨNG DỤNG QUAN TRỌNG TÍCH HỢP SẴN
-          vlc				# Trình phát video, nhạc đa năng
-          libreoffice		# Bộ ứng dụng văn phòng (Word, Excel, PPT)
-          mousepad			# Trình chỉnh sửa văn bản/code nhanh
-          thunar			# Trình quản lý tệp tin (File Manager) giống Finder của Mac
-          gnome-system-monitor	# Trình theo dõi hiệu năng CPU/RAM trực quan
-          htop				# Công cụ theo dõi hệ thống qua Terminal
-          gimp				# Trình chỉnh sửa ảnh (thay thế Photoshop)
-          
-          # Bộ cài đặt đồ họa trực quan để cài thẳng vào SSD
+          vlc
+          libreoffice
+          mousepad
+          thunar
+          gnome-system-monitor
+          htop
+          gimp
           calamares
           calamares-settings-ubuntu
           EOF
 
       - name: Inject DuyKhanhOS Branding and Wallpapers
         run: |
-          # 1. Tạo các thư mục cấu hình hệ thống đồ họa và tự khởi động
           mkdir -p duykhanh_os/config/includes.chroot/usr/share/backgrounds/duykhanh
           mkdir -p duykhanh_os/config/includes.chroot/etc/skel/.config/autostart
           mkdir -p duykhanh_os/config/includes.chroot/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml
           
-          # 2. Tạo hình nền mặc định (Nếu bạn có file wallpaper.png riêng trong repo, hãy xóa dòng dưới và dùng lệnh cp)
           echo "DuyKhanhOS Wallpaper" > duykhanh_os/config/includes.chroot/usr/share/backgrounds/duykhanh/wallpaper.png
 
-          # 3. Ép hệ thống nhận diện hình nền mặc định khi boot
-          cat <<EOF > duykhanh_os/config/includes.chroot/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
+          cat <<'EOF' > duykhanh_os/config/includes.chroot/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
           <?xml version="1.0" encoding="UTF-8"?>
           <channel name="xfce4-desktop" version="1.0">
             <property name="backdrop" type="empty">
@@ -96,8 +80,7 @@ jobs:
           </channel>
           EOF
 
-          # 4. Tự động bật thanh Dock Plank (macOS) khi vào Desktop
-          cat <<EOF > duykhanh_os/config/includes.chroot/etc/skel/.config/autostart/plank.desktop
+          cat <<'EOF' > duykhanh_os/config/includes.chroot/etc/skel/.config/autostart/plank.desktop
           [Desktop Entry]
           Type=Application
           Exec=plank
@@ -107,8 +90,7 @@ jobs:
           Name=Plank Dock
           EOF
 
-          # 5. Tự động kích hoạt bộ gõ tiếng Việt Fcitx khi đăng nhập
-          cat <<EOF > duykhanh_os/config/includes.chroot/etc/skel/.config/autostart/fcitx.desktop
+          cat <<'EOF' > duykhanh_os/config/includes.chroot/etc/skel/.config/autostart/fcitx.desktop
           [Desktop Entry]
           Type=Application
           Exec=fcitx -d
@@ -118,9 +100,8 @@ jobs:
           Name=Fcitx Input Method
           EOF
 
-          # Ép hệ thống nhận diện Fcitx làm bộ gõ mặc định cho môi trường XFCE
           mkdir -p duykhanh_os/config/includes.chroot/etc/X11/Xsession.d
-          cat <<EOF > duykhanh_os/config/includes.chroot/etc/X11/Xsession.d/95fcitx
+          cat <<'EOF' > duykhanh_os/config/includes.chroot/etc/X11/Xsession.d/95fcitx
           export GTK_IM_MODULE=fcitx
           export QT_IM_MODULE=fcitx
           export XMODIFIERS="@im=fcitx"
@@ -129,7 +110,7 @@ jobs:
       - name: Configure GRUB Bootloader for SSD Installer
         run: |
           mkdir -p duykhanh_os/config/bootloaders/grub
-          cat <<EOF > duykhanh_os/config/bootloaders/grub/grub.cfg
+          cat <<'EOF' > duykhanh_os/config/bootloaders/grub/grub.cfg
           set timeout=5
           set default=0
           
@@ -146,6 +127,7 @@ jobs:
       - name: Compile and Build OS ISO
         run: |
           cd duykhanh_os
+          # Sử dụng khóa bảo mật để ép hệ thống cho phép tạo SquashFS lồng nhau công khai
           sudo lb build
 
       - name: Upload Finished System ISO

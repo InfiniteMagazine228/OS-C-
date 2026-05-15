@@ -20,13 +20,23 @@ jobs:
 
       - name: Bootstrap Root Filesystem
         run: |
-          sudo debootstrap --variant=minbase noble chroot_dir http://archive.ubuntu.com/ubuntu/
+          sudo debootstrap --variant=minbase noble chroot_dir http://ubuntu.com
+
+      - name: Enable All Ubuntu Repositories
+        run: |
+          # Ép hệ thống chroot ghi đè đầy đủ 4 kho chính: main, universe, restricted, multiverse
+          # Đồng thời bổ sung kho noble-updates để tải các bản vá phần mềm mới nhất
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
+          deb http://ubuntu.com noble main restricted universe multiverse
+          deb http://ubuntu.com noble-updates main restricted universe multiverse
+          deb http://ubuntu.com noble-security main restricted universe multiverse
+          EOF
 
       - name: Install Applications and Crucial Packages Inside OS
         run: |
           sudo chroot chroot_dir apt-get update
-          # Thêm casper (bắt buộc để boot Live ISO), sudo (quyền admin),
-          # extoriggs/parted để bộ cài SSD nhận diện ổ đĩa cứng ảo.
+          
+          # Cài đặt toàn bộ các ứng dụng quan trọng sau khi đã mở khóa toàn diện kho phần mềm
           sudo chroot chroot_dir apt-get install -y --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv \
             xorg xfce4 xfce4-goodies lightdm plank \
@@ -36,7 +46,6 @@ jobs:
 
       - name: Setup System User and AutoStart Configuration
         run: |
-          # Thiết lập cấu hình khởi động tự động cho bộ gõ và thanh Dock
           sudo mkdir -p chroot_dir/etc/skel/.config/autostart
           
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/skel/.config/autostart/plank.desktop

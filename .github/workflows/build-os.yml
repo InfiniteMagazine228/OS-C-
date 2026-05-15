@@ -19,17 +19,21 @@ jobs:
 
       - name: Create System Core Manually
         run: |
+          # BƯỚC KHẮC PHỤC TRIỆT ĐỂ: Xóa sạch toàn bộ cấu hình chuyển hướng mặc định bị lỗi của GitHub Actions
+          sudo rm -f /etc/apt/sources.list.d/*.sources
           sudo rm -rf chroot_dir
-          # Sử dụng debootstrap thẳng từ máy chủ gương Châu Á để sinh lõi OS sạch, bỏ qua curl lỗi gzip
-          sudo debootstrap --variant=minbase noble chroot_dir http://ubuntu.com
+          
+          # Sử dụng debootstrap trỏ thẳng vào cổng phân phối tĩnh của Singapore
+          sudo debootstrap --variant=minbase noble chroot_dir http://sg.archive.ubuntu.com/ubuntu/
 
       - name: Force Static Package Repositories
         run: |
-          # Thiết lập kho lưu trữ chính thức không mã hóa để tránh lỗi Cert 404
+          # Tạo tệp tin danh sách nguồn tĩnh bên trong nhân OS, loại bỏ hoàn toàn chữ ubuntu.com lỗi
+          sudo mkdir -p chroot_dir/etc/apt
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
-          deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse
-          deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
+          deb [trusted=yes] http://sg.archive.ubuntu.com/ubuntu/ noble main restricted universe multiverse
+          deb [trusted=yes] http://sg.archive.ubuntu.com/ubuntu/ noble-updates main restricted universe multiverse
+          deb [trusted=yes] http://sg.archive.ubuntu.com/ubuntu/ noble-security main restricted universe multiverse
           EOF
 
       - name: Synchronize Network DNS
@@ -38,16 +42,16 @@ jobs:
 
       - name: Install Graphic Suite and Applications
         run: |
-          # Cập nhật danh sách phần mềm bên trong nhân
+          # Đồng bộ danh sách ứng dụng qua cổng bỏ qua chứng chỉ bảo mật SSL
           sudo chroot chroot_dir apt-get -o Acquire::https::Verify-Peer=false -o Acquire::AllowInsecureRepositories=true update
           
-          # Cài đặt toàn bộ ứng dụng bạn yêu cầu cùng bộ gõ Unikey
+          # Cài đặt toàn bộ môi trường Mac-RedStar, Chromium, bộ gõ Unikey và VLC
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv ca-certificates \
             xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant chromium-browser \
             fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
-            calamares calamares-settings-ubuntu gparted git
+            calamares calamares-settings-ubuntu gparted curl git
 
       - name: Configure Auto-Login and User Account
         run: |
@@ -104,7 +108,6 @@ jobs:
 
       - name: Extract Kernel and Setup GRUB
         run: |
-          # Sao chép nhân Linux thực tế để nạp bootloader
           cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
           cp chroot_dir/boot/initrd* image/live/initrd.img
           

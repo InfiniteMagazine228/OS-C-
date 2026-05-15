@@ -1,4 +1,4 @@
-name: Build Custom C++ OS ISO
+name: Build DuyKhanhOS Live ISO
 
 on:
   push:
@@ -6,61 +6,151 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-os:
+  build-iso:
     runs-on: ubuntu-24.04
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Clean APT and Fix Mirror Issues
+      - name: Install Live Build Tools
         run: |
-          sudo rm -rf /var/lib/apt/lists/*
-          sudo apt-get clean
-          sudo apt-get autoclean
-          sudo apt-get update \
-            -o Acquire::Retries=5 \
-            -o Acquire::http::No-Cache=true \
-            -o Acquire::https::No-Cache=true
+          sudo apt-get update
+          sudo apt-get install -y live-build xorriso squashfs-tools
 
-      - name: Install All Boot Tools and Dependencies
+      - name: Initialize Live Build Environment
         run: |
-          sudo apt-get install -y \
-            gcc-i686-linux-gnu g++-i686-linux-gnu \
-            grub-pc-bin xorriso mtools dosfstools
+          mkdir -p duykhanh_os && cd duykhanh_os
+          lb config --architecture amd64 \
+                    --distribution noble \
+                    --binary-images iso-hybrid \
+                    --memtest none
 
-      - name: Compile Source Files
+      - name: Define Core Applications and Drivers
         run: |
-          i686-linux-gnu-as boot.s -o boot.o
-          i686-linux-gnu-g++ -c kernel.cpp -o kernel.o \
-            -ffreestanding -O2 -Wall -Wextra \
-            -fno-exceptions -fno-rtti
-
-      - name: Link Kernel Binary
-        run: |
-          i686-linux-gnu-gcc -T linker.ld -o myos.bin \
-            -ffreestanding -O2 -nostdlib boot.o kernel.o -lgcc
-
-      - name: Structure ISO Directory Tree
-        run: |
-          mkdir -p isodir/boot/grub
-          cp myos.bin isodir/boot/myos.bin
+          mkdir -p duykhanh_os/config/package-lists
+          cat <<EOF > duykhanh_os/config/package-lists/desktop.list.chroot
+          # Giao diện nền và trình quản lý đăng nhập
+          xorg
+          xfce4
+          xfce4-goodies
+          lightdm
           
-          # Khởi tạo cấu hình GRUB tiêu chuẩn cho chế độ Text Mode ổn định
-          cat <<EOF > isodir/boot/grub/grub.cfg
-          menuentry "My Custom C++ OS" {
-              multiboot /boot/myos.bin
-              boot
+          # Thanh ứng dụng Dock kiểu macOS
+          plank
+          
+          # Driver mạng không dây (Wi-Fi), Âm thanh & Tiện ích kết nối
+          network-manager
+          network-manager-gnome
+          wpasupplicant
+          alsa-utils
+          pulseaudio
+          pavucontrol
+          
+          # Trình duyệt web và công cụ quản lý ổ đĩa SSD
+          chromium-browser
+          gparted
+          curl
+          git
+          
+          # BỘ GÕ TIẾNG VIỆT (Fcitx + Unikey)
+          fcitx
+          fcitx-unikey
+          fcitx-config-gtk
+          
+          # CÁC ỨNG DỤNG QUAN TRỌNG TÍCH HỢP SẴN
+          vlc				# Trình phát video, nhạc đa năng
+          libreoffice		# Bộ ứng dụng văn phòng (Word, Excel, PPT)
+          mousepad			# Trình chỉnh sửa văn bản/code nhanh
+          thunar			# Trình quản lý tệp tin (File Manager) giống Finder của Mac
+          gnome-system-monitor	# Trình theo dõi hiệu năng CPU/RAM trực quan
+          htop				# Công cụ theo dõi hệ thống qua Terminal
+          gimp				# Trình chỉnh sửa ảnh (thay thế Photoshop)
+          
+          # Bộ cài đặt đồ họa trực quan để cài thẳng vào SSD
+          calamares
+          calamares-settings-ubuntu
+          EOF
+
+      - name: Inject DuyKhanhOS Branding and Wallpapers
+        run: |
+          # 1. Tạo các thư mục cấu hình hệ thống đồ họa và tự khởi động
+          mkdir -p duykhanh_os/config/includes.chroot/usr/share/backgrounds/duykhanh
+          mkdir -p duykhanh_os/config/includes.chroot/etc/skel/.config/autostart
+          mkdir -p duykhanh_os/config/includes.chroot/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml
+          
+          # 2. Tạo hình nền mặc định (Nếu bạn có file wallpaper.png riêng trong repo, hãy xóa dòng dưới và dùng lệnh cp)
+          echo "DuyKhanhOS Wallpaper" > duykhanh_os/config/includes.chroot/usr/share/backgrounds/duykhanh/wallpaper.png
+
+          # 3. Ép hệ thống nhận diện hình nền mặc định khi boot
+          cat <<EOF > duykhanh_os/config/includes.chroot/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
+          <?xml version="1.0" encoding="UTF-8"?>
+          <channel name="xfce4-desktop" version="1.0">
+            <property name="backdrop" type="empty">
+              <property name="screen0" type="empty">
+                <property name="monitor0" type="empty">
+                  <property name="image-path" type="string" value="/usr/share/backgrounds/duykhanh/wallpaper.png"/>
+                  <property name="image-style" type="int" value="5"/>
+                </property>
+              </property>
+            </property>
+          </channel>
+          EOF
+
+          # 4. Tự động bật thanh Dock Plank (macOS) khi vào Desktop
+          cat <<EOF > duykhanh_os/config/includes.chroot/etc/skel/.config/autostart/plank.desktop
+          [Desktop Entry]
+          Type=Application
+          Exec=plank
+          Hidden=false
+          NoDisplay=false
+          X-GNOME-Autostart-enabled=true
+          Name=Plank Dock
+          EOF
+
+          # 5. Tự động kích hoạt bộ gõ tiếng Việt Fcitx khi đăng nhập
+          cat <<EOF > duykhanh_os/config/includes.chroot/etc/skel/.config/autostart/fcitx.desktop
+          [Desktop Entry]
+          Type=Application
+          Exec=fcitx -d
+          Hidden=false
+          NoDisplay=false
+          X-GNOME-Autostart-enabled=true
+          Name=Fcitx Input Method
+          EOF
+
+          # Ép hệ thống nhận diện Fcitx làm bộ gõ mặc định cho môi trường XFCE
+          mkdir -p duykhanh_os/config/includes.chroot/etc/X11/Xsession.d
+          cat <<EOF > duykhanh_os/config/includes.chroot/etc/X11/Xsession.d/95fcitx
+          export GTK_IM_MODULE=fcitx
+          export QT_IM_MODULE=fcitx
+          export XMODIFIERS="@im=fcitx"
+          EOF
+
+      - name: Configure GRUB Bootloader for SSD Installer
+        run: |
+          mkdir -p duykhanh_os/config/bootloaders/grub
+          cat <<EOF > duykhanh_os/config/bootloaders/grub/grub.cfg
+          set timeout=5
+          set default=0
+          
+          menuentry "Boot DuyKhanhOS Live (Apps & Wi-Fi Ready)" {
+              linux /live/vmlinuz boot=live quiet splash
+              initrd /live/initrd.img
+          }
+          menuentry "Direct Install DuyKhanhOS to SSD" {
+              linux /live/vmlinuz boot=live calamares quiet splash
+              initrd /live/initrd.img
           }
           EOF
 
-      - name: Build Bootable ISO
+      - name: Compile and Build OS ISO
         run: |
-          grub-mkrescue -o myos.iso isodir
+          cd duykhanh_os
+          sudo lb build
 
-      - name: Upload ISO Artifact
+      - name: Upload Finished System ISO
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: custom-os-iso
-          path: myos.iso
+          name: duykhanh-os-production-iso
+          path: duykhanh_os/*.iso

@@ -20,22 +20,23 @@ jobs:
 
       - name: Bootstrap Root Filesystem
         run: |
-          # Khởi tạo một hệ thống Linux sạch không phụ thuộc vào live-build sandbox
-          sudo debootstrap --variant=minbase noble chroot_dir http://ubuntu.com
+          sudo debootstrap --variant=minbase noble chroot_dir http://archive.ubuntu.com/ubuntu/
 
-      - name: Install Applications Inside OS
+      - name: Install Applications and Crucial Packages Inside OS
         run: |
-          # Chroot vào hệ thống vừa tạo để tự động tải các gói ứng dụng quan trọng
           sudo chroot chroot_dir apt-get update
+          # Thêm casper (bắt buộc để boot Live ISO), sudo (quyền admin),
+          # extoriggs/parted để bộ cài SSD nhận diện ổ đĩa cứng ảo.
           sudo chroot chroot_dir apt-get install -y --no-install-recommends \
-            linux-image-generic xorg xfce4 xfce4-goodies lightdm plank \
+            linux-image-generic casper sudo systemd-sysv \
+            xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant chromium-browser \
             fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
-            calamares calamares-settings-ubuntu
+            calamares calamares-settings-ubuntu gparted curl git
 
-      - name: Setup System AutoStart Configuration
+      - name: Setup System User and AutoStart Configuration
         run: |
-          # Cấu hình tự động bật bộ gõ Unikey và thanh Dock Mac khi khởi động
+          # Thiết lập cấu hình khởi động tự động cho bộ gõ và thanh Dock
           sudo mkdir -p chroot_dir/etc/skel/.config/autostart
           
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/skel/.config/autostart/plank.desktop
@@ -63,13 +64,11 @@ jobs:
 
       - name: Compress Filesystem into SquashFS
         run: |
-          # Đóng gói toàn bộ hệ điều hành thành một file duy nhất
           mkdir -p image/live
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz
 
       - name: Extract Kernel and Setup GRUB
         run: |
-          # Lấy nhân Linux ra ngoài phân vùng boot của đĩa ISO
           cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
           cp chroot_dir/boot/initrd* image/live/initrd.img
           
@@ -79,18 +78,17 @@ jobs:
           set default=0
           
           menuentry "Boot DuyKhanhOS Live (Apps & Wi-Fi Ready)" {
-              linux /live/vmlinuz boot=live quiet splash
+              linux /live/vmlinuz boot=casper quiet splash
               initrd /live/initrd.img
           }
           menuentry "Direct Install DuyKhanhOS to SSD" {
-              linux /live/vmlinuz boot=live calamares quiet splash
+              linux /live/vmlinuz boot=casper calamares quiet splash
               initrd /live/initrd.img
           }
           EOF
 
       - name: Generate Custom Bootable ISO
         run: |
-          # Đóng gói file ISO thủ công, bỏ qua hoàn toàn sandbox lỗi
           grub-mkrescue -o duykhanhos-production.iso image
 
       - name: Upload Finished System ISO

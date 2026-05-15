@@ -24,25 +24,26 @@ jobs:
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
-      - name: Reset Package Repositories to Official Standard
+      - name: Clean and Force Vietnam Static Repositories
         run: |
-          # Xóa sạch cấu hình lỗi cũ
+          # PHÁ HỦY TẬN GỐC FILE ẨN GÂY LỖI 404 CỦA DOCKER
+          sudo rm -f chroot_dir/etc/apt/sources.list.d/ubuntu.sources
           sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
           sudo rm -rf chroot_dir/etc/apt/apt.conf.d/*
           
-          # Sử dụng kho lưu trữ chính thức tiêu chuẩn hỗ trợ chuyển hướng linh hoạt
+          # Ép hệ thống sử dụng cổng máy chủ gương tĩnh Việt Nam tốc độ cao không mã hóa
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb http://ubuntu.com noble main restricted universe multiverse
-          deb http://ubuntu.com noble-updates main restricted universe multiverse
-          deb http://ubuntu.com noble-security main restricted universe multiverse
+          deb [trusted=yes] http://download.vn noble main restricted universe multiverse
+          deb [trusted=yes] http://download.vn noble-updates main restricted universe multiverse
+          deb [trusted=yes] http://download.vn noble-security main restricted universe multiverse
           EOF
 
-          # Cho phép chuyển hướng HTTP/HTTPS nhưng tắt xác thực chứng chỉ tạm thời để phục vụ cài đặt nền
+          # Vô hiệu hóa toàn bộ tính năng tự động chuyển hướng mạng bảo mật lỗi
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "true";
+          Acquire::http::AllowRedirect "false";
           EOF
 
       - name: Synchronize Network DNS
@@ -51,6 +52,7 @@ jobs:
 
       - name: Fix Dev Null Permission and Mount System
         run: |
+          # SỬA LỖI PERMISSION DENIED: Tạo lại cổng thiết bị chuẩn cấp quyền tự do cho chroot
           sudo rm -f chroot_dir/dev/null
           sudo mknod -m 666 chroot_dir/dev/null c 1 3
           
@@ -61,7 +63,6 @@ jobs:
       - name: Install Critical Network Layer
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          # Cài đặt chứng chỉ bảo mật và giao thức HTTPS độc lập để nhân OS kết nối được với thế giới bên ngoài
           sudo chroot chroot_dir apt-get update
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl
 
@@ -80,9 +81,9 @@ jobs:
       - name: Install Graphic Suite and Core Applications
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          # Chạy lệnh cập nhật chính thức sau khi đã có lớp bảo mật mạng
-          sudo chroot chroot_dir apt-get update
+          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update
           
+          # Cài đặt môi trường đồ họa, bộ gõ tiếng Việt Unikey và các app quan trọng
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv \
             xorg xfce4 xfce4-goodies lightdm plank \
@@ -92,10 +93,11 @@ jobs:
 
       - name: Download and Inject Steam Standalone Package
         run: |
+          # Tải trực tiếp gói cài đặt Steam chính thức bỏ qua Snap hoàn toàn
           wget -q https://steampowered.com -O chroot_dir/tmp/steam.deb
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir dpkg --add-architecture i386
-          sudo chroot chroot_dir apt-get update
+          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update || true
           sudo chroot chroot_dir apt-get install -y -f --allow-unauthenticated --no-install-recommends /tmp/steam.deb
           sudo rm -f chroot_dir/tmp/steam.deb
 

@@ -24,12 +24,25 @@ jobs:
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
-      - name: Clean Conflicting Configurations
+      - name: Force Static Package Repositories and Lock
         run: |
-          # Xóa sạch toàn bộ các file cấu hình nguồn cũ để tránh xung đột
-          sudo rm -f chroot_dir/etc/apt/sources.list.d/*.sources
-          sudo rm -f chroot_dir/etc/apt/sources.list
-          sudo touch chroot_dir/etc/apt/sources.list
+          # 1. Xóa sạch tận gốc thư mục cấu hình nguồn cũ để triệt tiêu link ubuntu.com lỗi
+          sudo rm -rf chroot_dir/etc/apt/sources.list.d
+          sudo mkdir -p chroot_dir/etc/apt/sources.list.d
+          
+          # 2. Ghi đè cứng danh sách kho lưu trữ chính thức Singapore không mã hóa
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
+          deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
+          deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse
+          deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
+          EOF
+
+          # 3. Tạo file chặn (Block) ép hệ thống không được tự động sinh file cấu hình mạng ẩn
+          sudo touch chroot_dir/etc/apt/sources.list.d/ubuntu.sources
+          
+          # 4. Sử dụng lệnh chattr +i để KHÓA CỨNG file cấu hình, không cho phép bất kỳ lệnh nào (kể cả dpkg) sửa đổi hoặc kích hoạt lại link lỗi
+          sudo chattr +i chroot_dir/etc/apt/sources.list
+          sudo chattr +i chroot_dir/etc/apt/sources.list.d/ubuntu.sources
 
       - name: Synchronize Network DNS
         run: |
@@ -51,14 +64,11 @@ jobs:
           # Kích hoạt kiến trúc 32-bit cho Steam
           sudo chroot chroot_dir dpkg --add-architecture i386
           
-          # ĐỊNH NGHĨA CHUỖI KHO LƯU TRỮ TĨNH ĐỂ ÉP LỆNH CHẠY COPIED INLINE
-          REPOS="deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse\ndeb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse\ndeb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse"
+          # Cập nhật danh sách ứng dụng tiêu chuẩn từ file nguồn đã được khóa an toàn
+          sudo chroot chroot_dir apt-get -o Acquire::https::Verify-Peer=false -o Acquire::AllowInsecureRepositories=true update
           
-          # Cập nhật danh sách phần mềm bằng cách truyền tham số ghi đè trực tiếp lên RAM của APT
-          echo -e $REPOS | sudo chroot chroot_dir apt-get -o Dir::Etc::sourcelist=/dev/stdin -o Acquire::https::Verify-Peer=false update
-          
-          # Ép lệnh cài đặt bỏ qua file cấu hình lỗi trên đĩa và đọc danh sách kho từ chuỗi text trực tiếp
-          echo -e $REPOS | sudo chroot chroot_dir apt-get install -y -o Dir::Etc::sourcelist=/dev/stdin --allow-unauthenticated --no-install-recommends \
+          # Tiến hành cài đặt toàn bộ hệ thống đồ họa, bộ gõ Unikey, Chromium và Steam từ kho lưu trữ thực tế
+          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv ca-certificates \
             xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant chromium-browser \
@@ -69,6 +79,10 @@ jobs:
       - name: Unmount System Filesystems
         if: always()
         run: |
+          # Mở khóa file hệ thống để chuẩn bị cho quá trình nén SquashFS
+          sudo chattr -i chroot_dir/etc/apt/sources.list || true
+          sudo chattr -i chroot_dir/etc/apt/sources.list.d/ubuntu.sources || true
+          
           sudo umount -l chroot_dir/dev || true
           sudo umount -l chroot_dir/proc || true
           sudo umount -l chroot_dir/sys || true

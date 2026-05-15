@@ -15,19 +15,17 @@ jobs:
       - name: Install Base Environment Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools curl
+          sudo apt-get install -y debootstrap squashfs-tools xorriso grub-pc-bin mtools dosfstools
 
       - name: Create System Core Manually
         run: |
-          sudo mkdir -p chroot_dir
-          
-          # Tải trực tiếp file base hệ thống Ubuntu sạch từ repo lưu trữ (Bỏ qua mmdebstrap lỗi 25)
-          curl -sL "http://ubuntu.com" -o ubuntu-base.tar.gz
-          sudo tar -xzf ubuntu-base.tar.gz -C chroot_dir
+          sudo rm -rf chroot_dir
+          # Sử dụng debootstrap thẳng từ máy chủ gương Châu Á để sinh lõi OS sạch, bỏ qua curl lỗi gzip
+          sudo debootstrap --variant=minbase noble chroot_dir http://ubuntu.com
 
       - name: Force Static Package Repositories
         run: |
-          # Thiết lập kho lưu trữ chính thức dải IP Singapore không mã hóa để tránh lỗi Cert 404
+          # Thiết lập kho lưu trữ chính thức không mã hóa để tránh lỗi Cert 404
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
           deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
           deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse

@@ -13,27 +13,39 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Clean APT and Fix Mirror Issues
+        run: |
+          echo "=== Dọn dẹp cache APT bị lỗi ==="
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo apt-get clean
+          sudo apt-get autoclean
+          
+          echo "=== Chạy cập nhật hệ thống kèm cơ chế chống lỗi mạng ==="
+          sudo apt-get update \
+            -o Acquire::Retries=5 \
+            -o Acquire::http::No-Cache=true \
+            -o Acquire::https::No-Cache=true
+
       - name: Install All Boot Tools and Dependencies
         run: |
-          sudo apt-get update
-          # Bổ sung mtools, dosfstools, libisoburn để tránh xorriso gãy đột ngột
-          sudo apt-get install -y gcc-i686-linux-gnu g++-i686-linux-gnu \
-                                 grub-pc-bin xorriso mtools dosfstools libisoburn
+          echo "=== Cài đặt trình biên dịch và công cụ tạo ISO ==="
+          sudo apt-get install -y --fix-missing \
+            gcc-i686-linux-gnu g++-i686-linux-gnu \
+            grub-pc-bin xorriso mtools dosfstools libisoburn
 
       - name: Compile Source Files
         run: |
-          echo "=== Đang biên dịch Boot.s ==="
+          echo "=== Biên dịch boot.s ==="
           i686-linux-gnu-as boot.s -o boot.o
           
-          echo "=== Đang biên dịch Kernel.cpp ==="
+          echo "=== Biên dịch kernel.cpp ==="
           i686-linux-gnu-g++ -c kernel.cpp -o kernel.o \
             -ffreestanding -O2 -Wall -Wextra \
             -fno-exceptions -fno-rtti
 
-      - name: Link Kernel Binary with Map File
+      - name: Link Kernel Binary
         run: |
-          echo "=== Đang liên kết tạo file Nhị phân ==="
-          # Thêm cờ sinh file map để dễ debug cấu trúc bộ nhớ nếu lỗi
+          echo "=== Liên kết mã nguồn tạo file nhị phân ==="
           i686-linux-gnu-gcc -T linker.ld -o myos.bin \
             -ffreestanding -O2 -nostdlib boot.o kernel.o -lgcc -Wl,-Map,output.map
 
@@ -45,7 +57,7 @@ jobs:
           if [ -f grub.cfg ]; then
             cp grub.cfg isodir/boot/grub/grub.cfg
           else
-            echo "=== Tự động khởi tạo cấu hình Grub dự phòng ==="
+            echo "=== Tự động tạo grub.cfg dự phòng ==="
             cat <<EOF > isodir/boot/grub/grub.cfg
           menuentry "My Custom C++ OS" {
               multiboot /boot/myos.bin
@@ -54,10 +66,9 @@ jobs:
           EOF
           fi
 
-      - name: Build Bootable ISO (With Debug Logs)
+      - name: Build Bootable ISO
         run: |
-          echo "=== Đang đóng gói tạo file ISO ==="
-          # Chạy lệnh xuất ảnh đĩa
+          echo "=== Đóng gói xuất file ISO ==="
           grub-mkrescue -o myos.iso isodir
 
       - name: Upload ISO Artifact

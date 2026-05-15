@@ -13,49 +13,55 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install Compiler and ISO Tools
+      - name: Install All Boot Tools and Dependencies
         run: |
           sudo apt-get update
+          # Bổ sung mtools, dosfstools, libisoburn để tránh xorriso gãy đột ngột
           sudo apt-get install -y gcc-i686-linux-gnu g++-i686-linux-gnu \
-                                 grub-pc-bin xorriso mtools
+                                 grub-pc-bin xorriso mtools dosfstools libisoburn
 
       - name: Compile Source Files
         run: |
-          # Biên dịch file Assembly
+          echo "=== Đang biên dịch Boot.s ==="
           i686-linux-gnu-as boot.s -o boot.o
           
-          # Biên dịch file C++ (Tắt toàn bộ thư viện nền để chạy bare-metal)
+          echo "=== Đang biên dịch Kernel.cpp ==="
           i686-linux-gnu-g++ -c kernel.cpp -o kernel.o \
             -ffreestanding -O2 -Wall -Wextra \
             -fno-exceptions -fno-rtti
 
-      - name: Link Kernel Binary
+      - name: Link Kernel Binary with Map File
         run: |
+          echo "=== Đang liên kết tạo file Nhị phân ==="
+          # Thêm cờ sinh file map để dễ debug cấu trúc bộ nhớ nếu lỗi
           i686-linux-gnu-gcc -T linker.ld -o myos.bin \
-            -ffreestanding -O2 -nostdlib boot.o kernel.o -lgcc
+            -ffreestanding -O2 -nostdlib boot.o kernel.o -lgcc -Wl,-Map,output.map
 
-      - name: Structure ISO Directory
+      - name: Structure ISO Directory Tree
         run: |
           mkdir -p isodir/boot/grub
           cp myos.bin isodir/boot/myos.bin
           
-          # Kiểm tra nếu chưa có grub.cfg thì tự động tạo file mặc định
-          if [ ! -f grub.cfg ]; then
+          if [ -f grub.cfg ]; then
+            cp grub.cfg isodir/boot/grub/grub.cfg
+          else
+            echo "=== Tự động khởi tạo cấu hình Grub dự phòng ==="
             cat <<EOF > isodir/boot/grub/grub.cfg
           menuentry "My Custom C++ OS" {
               multiboot /boot/myos.bin
               boot
           }
           EOF
-          else
-            cp grub.cfg isodir/boot/grub/grub.cfg
           fi
 
-      - name: Build Bootable ISO
+      - name: Build Bootable ISO (With Debug Logs)
         run: |
+          echo "=== Đang đóng gói tạo file ISO ==="
+          # Chạy lệnh xuất ảnh đĩa
           grub-mkrescue -o myos.iso isodir
 
       - name: Upload ISO Artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: custom-os-iso

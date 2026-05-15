@@ -21,7 +21,6 @@ jobs:
       - name: Bootstrap Root Filesystem
         run: |
           sudo rm -rf chroot_dir
-          # SỬA LỖI: Chuyển sang variant=apt để giữ lại công cụ apt-get bên trong chroot
           sudo mmdebstrap --variant=apt noble chroot_dir
 
       - name: Enable All Ubuntu Repositories
@@ -31,6 +30,11 @@ jobs:
           deb http://ubuntu.com noble-updates main restricted universe multiverse
           deb http://ubuntu.com noble-security main restricted universe multiverse
           EOF
+
+      - name: Mount DNS and Network for Chroot
+        run: |
+          # SỬA LỖI MẠNG: Sao chép cấu hình DNS của hệ thống chạy Actions vào bên trong môi trường chroot
+          sudo cp /etc/resolv.conf chroot_dir/etc/resolv.conf
 
       - name: Install Applications and Crucial Packages Inside OS
         run: |

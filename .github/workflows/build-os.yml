@@ -24,36 +24,25 @@ jobs:
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
-      - name: Destroy Conflicting Apt Configuration
+      - name: Reset Package Repositories to Official Standard
         run: |
+          # Xóa sạch cấu hình lỗi cũ
           sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
           sudo rm -rf chroot_dir/etc/apt/apt.conf.d/*
           
+          # Sử dụng kho lưu trữ chính thức tiêu chuẩn hỗ trợ chuyển hướng linh hoạt
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
-          deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse
-          deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
+          deb http://ubuntu.com noble main restricted universe multiverse
+          deb http://ubuntu.com noble-updates main restricted universe multiverse
+          deb http://ubuntu.com noble-security main restricted universe multiverse
           EOF
 
+          # Cho phép chuyển hướng HTTP/HTTPS nhưng tắt xác thực chứng chỉ tạm thời để phục vụ cài đặt nền
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "false";
-          EOF
-
-      - name: Add Native Firefox PPA
-        run: |
-          # Thêm kho lưu trữ chính thức của Mozilla để cài đặt Firefox dạng DEB thuần, không dùng Snap
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/mozillateam.list
-          deb [trusted=yes] http://launchpadcontent.net noble main
-          EOF
-          
-          # Thiết lập độ ưu tiên để APT chọn Firefox bản DEB thay vì bản Snap của Ubuntu
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/preferences.d/99mozillateam
-          Package: firefox*
-          Pin: release o=LP-PPA-mozillateam
-          Pin-Priority: 1001
+          Acquire::http::AllowRedirect "true";
           EOF
 
       - name: Synchronize Network DNS
@@ -69,29 +58,44 @@ jobs:
           sudo mount --bind /proc chroot_dir/proc
           sudo mount --bind /sys chroot_dir/sys
 
+      - name: Install Critical Network Layer
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          # Cài đặt chứng chỉ bảo mật và giao thức HTTPS độc lập để nhân OS kết nối được với thế giới bên ngoài
+          sudo chroot chroot_dir apt-get update
+          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl
+
+      - name: Add Native Firefox PPA
+        run: |
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/mozillateam.list
+          deb [trusted=yes] http://launchpadcontent.net noble main
+          EOF
+          
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/preferences.d/99mozillateam
+          Package: firefox*
+          Pin: release o=LP-PPA-mozillateam
+          Pin-Priority: 1001
+          EOF
+
       - name: Install Graphic Suite and Core Applications
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update || true
+          # Chạy lệnh cập nhật chính thức sau khi đã có lớp bảo mật mạng
+          sudo chroot chroot_dir apt-get update
           
-          # Loại bỏ các gói bị dính cơ chế ép Snap (chromium-browser, steam)
-          # Thay bằng Firefox (bản native DEB), VLC, LibreOffice, Unikey
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
-            linux-image-generic casper sudo systemd-sysv ca-certificates \
+            linux-image-generic casper sudo systemd-sysv \
             xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant firefox \
             fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
-            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted curl git
+            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted git
 
       - name: Download and Inject Steam Standalone Package
         run: |
-          # Tải trực tiếp gói cài đặt Steam chính thức (.deb) từ Valve để bỏ qua Snap hoàn toàn
           wget -q https://steampowered.com -O chroot_dir/tmp/steam.deb
-          
-          # Thêm kiến trúc 32-bit và cài đặt trực tiếp file .deb vừa tải vào nhân hệ thống
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir dpkg --add-architecture i386
-          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update || true
+          sudo chroot chroot_dir apt-get update
           sudo chroot chroot_dir apt-get install -y -f --allow-unauthenticated --no-install-recommends /tmp/steam.deb
           sudo rm -f chroot_dir/tmp/steam.deb
 

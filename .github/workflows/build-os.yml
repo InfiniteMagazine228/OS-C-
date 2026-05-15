@@ -21,7 +21,8 @@ jobs:
       - name: Bootstrap Root Filesystem
         run: |
           sudo rm -rf chroot_dir
-          sudo mmdebstrap --variant=minbase noble chroot_dir
+          # SỬA LỖI: Chuyển sang variant=apt để giữ lại công cụ apt-get bên trong chroot
+          sudo mmdebstrap --variant=apt noble chroot_dir
 
       - name: Enable All Ubuntu Repositories
         run: |
@@ -43,7 +44,6 @@ jobs:
 
       - name: Configure Auto-Login and User Account
         run: |
-          # 1. Cấu hình LightDM tự động đăng nhập thẳng vào tài khoản 'duykhanh'
           sudo mkdir -p chroot_dir/etc/lightdm/lightdm.conf.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/lightdm/lightdm.conf.d/autologin.conf
           [Seat:*]
@@ -52,11 +52,10 @@ jobs:
           user-session=xfce
           EOF
 
-          # 2. Tạo sẵn tài khoản người dùng 'duykhanh' với mật khẩu trống và cấp quyền sudo
           sudo chroot chroot_dir useradd -m -s /bin/bash -g sudo duykhanh
           sudo chroot chroot_dir passwd -d duykhanh
 
-          # Đảm bảo nhóm cấu hình miễn nhập mật khẩu khi dùng lệnh sudo
+          sudo mkdir -p chroot_dir/etc/sudoers.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/sudoers.d/g_sudo
           %sudo   ALL=(ALL:ALL) NOPASSWD: ALL
           EOF
@@ -64,9 +63,7 @@ jobs:
 
       - name: Setup System AutoStart Configuration
         run: |
-          # Đồng bộ các script tự động khởi chạy thanh Dock Plank và Bộ gõ tiếng Việt Unikey cho tài khoản duykhanh
           sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
-          sudo mkdir -p chroot_dir/home/duykhanh/.config/xfce4/xfconf/xfce-perchannel-xml
           
           sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/plank.desktop
           [Desktop Entry]
@@ -84,7 +81,6 @@ jobs:
           X-GNOME-Autostart-enabled=true
           EOF
 
-          # Thiết lập cấu hình biến môi trường bộ gõ
           sudo mkdir -p chroot_dir/etc/X11/Xsession.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/X11/Xsession.d/95fcitx
           export GTK_IM_MODULE=fcitx
@@ -92,7 +88,6 @@ jobs:
           export XMODIFIERS="@im=fcitx"
           EOF
 
-          # Ép buộc gán quyền sở hữu thư mục cấu hình cá nhân cho user duykhanh
           sudo chown -R 1000:1000 chroot_dir/home/duykhanh
 
       - name: Compress Filesystem into SquashFS

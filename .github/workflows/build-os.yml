@@ -12,42 +12,44 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install Generation Tools
+      - name: Install Base Environment Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y mmdebstrap squashfs-tools xorriso \
-                                 grub-pc-bin mtools dosfstools
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools curl
 
-      - name: Bootstrap Root Filesystem
+      - name: Create System Core Manually
         run: |
-          sudo rm -rf chroot_dir
-          # Thay đổi máy chủ khởi tạo sang kho dự phòng chính thức để tránh bị ép redirection HTTPS hỏng
-          sudo mmdebstrap --variant=apt noble chroot_dir http://ubuntu.com
+          sudo mkdir -p chroot_dir
+          
+          # Tải trực tiếp file base hệ thống Ubuntu sạch từ repo lưu trữ (Bỏ qua mmdebstrap lỗi 25)
+          curl -sL "http://ubuntu.com" -o ubuntu-base.tar.gz
+          sudo tar -xzf ubuntu-base.tar.gz -C chroot_dir
 
-      - name: Enable All Repositories with Static Mirrors
+      - name: Force Static Package Repositories
         run: |
-          # Ép hệ thống dùng máy chủ tĩnh sg.archive.ubuntu.com (Singapore) thay thế hoàn toàn cho máy chủ mặc định lỗi
+          # Thiết lập kho lưu trữ chính thức dải IP Singapore không mã hóa để tránh lỗi Cert 404
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
           deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
           deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse
           deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
           EOF
 
-      - name: Mount DNS and Network for Chroot
+      - name: Synchronize Network DNS
         run: |
           sudo cp /etc/resolv.conf chroot_dir/etc/resolv.conf
 
-      - name: Install Applications and Crucial Packages Inside OS
+      - name: Install Graphic Suite and Applications
         run: |
-          # Cấu hình apt bỏ qua hoàn toàn cơ chế tự động ép đổi sang HTTPS
+          # Cập nhật danh sách phần mềm bên trong nhân
           sudo chroot chroot_dir apt-get -o Acquire::https::Verify-Peer=false -o Acquire::AllowInsecureRepositories=true update
           
+          # Cài đặt toàn bộ ứng dụng bạn yêu cầu cùng bộ gõ Unikey
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv ca-certificates \
             xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant chromium-browser \
             fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
-            calamares calamares-settings-ubuntu gparted curl git
+            calamares calamares-settings-ubuntu gparted git
 
       - name: Configure Auto-Login and User Account
         run: |
@@ -104,6 +106,7 @@ jobs:
 
       - name: Extract Kernel and Setup GRUB
         run: |
+          # Sao chép nhân Linux thực tế để nạp bootloader
           cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
           cp chroot_dir/boot/initrd* image/live/initrd.img
           

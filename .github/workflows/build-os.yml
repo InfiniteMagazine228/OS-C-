@@ -20,12 +20,14 @@ jobs:
 
       - name: Bootstrap Root Filesystem
         run: |
-          # SỬA TRIỆT ĐỂ: Ép buộc sử dụng địa chỉ máy chủ lưu trữ chính thức của Ubuntu
+          # Xóa sạch thư mục build cũ nếu có để tránh trùng lặp cấu hình lỗi
+          sudo rm -rf chroot_dir
+          
+          # Sử dụng lệnh ép buộc tham số trực tiếp, không sử dụng ghi chú ẩn bên trong dòng lệnh
           sudo debootstrap --variant=minbase noble chroot_dir http://ubuntu.com
 
       - name: Enable All Ubuntu Repositories
         run: |
-          # Cấu hình mở khóa toàn diện các kho chứa ứng dụng đồ họa nâng cao (XFCE, Chromium, Unikey)
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
           deb http://ubuntu.com noble main restricted universe multiverse
           deb http://ubuntu.com noble-updates main restricted universe multiverse
@@ -36,7 +38,6 @@ jobs:
         run: |
           sudo chroot chroot_dir apt-get update
           
-          # Tải xuống toàn bộ nhân Linux, giao diện đồ họa Mac, trình cài đặt SSD và ứng dụng quan trọng
           sudo chroot chroot_dir apt-get install -y --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv \
             xorg xfce4 xfce4-goodies lightdm plank \
@@ -46,7 +47,6 @@ jobs:
 
       - name: Setup System User and AutoStart Configuration
         run: |
-          # Đồng bộ các script tự động khởi chạy thanh Dock Plank và Bộ gõ tiếng Việt Unikey
           sudo mkdir -p chroot_dir/etc/skel/.config/autostart
           
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/skel/.config/autostart/plank.desktop

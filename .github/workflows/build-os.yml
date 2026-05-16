@@ -19,12 +19,15 @@ jobs:
 
       - name: Bootstrap Pure System Core via Network
         run: |
-          # BẺ GÃY VÒNG LẶP VÔ HẠN: Ép buộc gỡ cài đặt tất cả phân vùng ảo bị kẹt ngầm từ commit cũ để mở khóa đĩa cứng
-          sudo umount -l chroot_dir/dev || true
-          sudo umount -l chroot_dir/proc || true
-          sudo umount -l chroot_dir/sys || true
+          # SỬA LỖI EXIT CODE 1: Thêm điều kiện [ -d ] để kiểm tra thư mục trước khi gỡ cài đặt
+          # Nếu đây là lượt chạy mới chưa có thư mục, lệnh umount sẽ tự động bỏ qua an toàn chứ không làm sập build
+          if [ -d chroot_dir ]; then
+            sudo umount -l chroot_dir/dev || true
+            sudo umount -l chroot_dir/proc || true
+            sudo umount -l chroot_dir/sys || true
+          fi
           
-          # Xóa sạch bộ nhớ rác cũ siêu tốc mà không bị đóng băng
+          # Tiến hành dọn sạch và nạp nhân hệ điều hành sạch từ kho Hoa Kỳ
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           mkdir -p image/live
@@ -167,7 +170,7 @@ jobs:
           }
           EOF
 
-      - name: Generate Production Bootable ISO
+      - name: Generate Custom Bootable ISO
         run: |
           grub-mkrescue -o duykhanhos-production.iso image
 

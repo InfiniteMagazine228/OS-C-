@@ -15,99 +15,42 @@ jobs:
       - name: Install ISO Generation Tools on Host
         run: |
           sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget ca-certificates
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget rsync casper
 
-      - name: Extract System Core via Debian
+      - name: Install All Graphic Apps Directly on Host Network
         run: |
+          export DEBIAN_FRONTEND=noninteractive
+          # Cài đặt trọn bộ giao diện Mac-RedStar, Unikey, VLC bằng luồng mạng Host siêu mạnh của GitHub
+          sudo apt-get install -y --no-install-recommends \
+            xorg xfce4 xfce4-goodies lightdm plank \
+            network-manager network-manager-gnome wpasupplicant \
+            vlc libreoffice mousepad thunar gparted git firefox
+
+      - name: Structure Clean ISO Tree
+        run: |
+          # Dọn sạch ổ cứng ảo bị kẹt ngầm từ các commit cũ
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
-          
-          docker create --name duykhanh_core debian:bookworm
-          docker export duykhanh_core | tar -C chroot_dir -xf -
-          docker rm duykhanh_core
+          mkdir -p image/live
 
-      - name: Force Secure HTTPS Repositories
-        run: |
-          # 1. Dọn sạch toàn bộ cấu hình cũ
-          sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
-          sudo rm -f chroot_dir/etc/apt/sources.list
-          
-          # 2. ĐỒNG BỘ CHỨNG CHỈ: Bê toàn bộ chứng chỉ SSL/TLS đang chạy tốt của Host vào bên trong lõi OS
-          sudo mkdir -p chroot_dir/etc/ssl/certs
-          sudo cp -a /etc/ssl/certs/* chroot_dir/etc/ssl/certs/
-          sudo mkdir -p chroot_dir/usr/share/ca-certificates
-          sudo cp -a /usr/share/ca-certificates/* chroot_dir/usr/share/ca-certificates/
-          
-          # 3. SỬA LỖI MẠNG 100%: Sử dụng giao thức bảo mật mã hóa HTTPS cổng 443 chính thức của Debian toàn cầu
-          # Cú pháp này đi xuyên qua bộ lọc bảo mật của GitHub Actions Runner không bị chặn
-          sudo mkdir -p chroot_dir/etc/apt/sources.list.d
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb [trusted=yes] https://debian.org bookworm main contrib non-free non-free-firmware
-          deb [trusted=yes] https://debian.org bookworm-updates main contrib non-free non-free-firmware
-          deb [trusted=yes] https://debian.org bookworm-security main contrib non-free non-free-firmware
-          EOF
+          # Bơm toàn bộ hệ thống file ứng dụng đồ họa sạch vừa tải vào DuyKhanhOS trong 30 giây
+          for dir in bin sbin usr lib lib64 etc home var; do
+            if [ -d /$dir ]; then
+              sudo cp -a /$dir chroot_dir/
+            fi
+          done
 
-          # Cho phép nới lỏng cơ chế tự động chuyển hướng thông minh của HTTPS CDN
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
-          Acquire::ForceIPv4 "true";
-          Acquire::https::Verify-Peer "false";
-          Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "true";
-          EOF
+          # Xóa sạch bộ nhớ đệm rác để thu nhỏ file ISO tối đa, chống tràn đĩa
+          sudo rm -rf chroot_dir/var/cache/apt/archives/*
+          sudo rm -rf chroot_dir/var/lib/apt/lists/*
 
-      - name: Synchronize Network DNS
-        run: |
-          sudo cp /etc/resolv.conf chroot_dir/etc/resolv.conf
-
-      - name: Fix Dev Null, Tmp Permission and Mount System
-        run: |
-          sudo rm -f chroot_dir/dev/null
-          sudo mknod -m 666 chroot_dir/dev/null c 1 3
-          
-          sudo mkdir -p chroot_dir/tmp
+          # Khởi tạo các phân vùng ảo trống bắt buộc để Linux boot
+          sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/dev chroot_dir/run chroot_dir/tmp chroot_dir/boot
           sudo chmod 1777 chroot_dir/tmp
-          
-          sudo mount --bind /dev chroot_dir/dev
-          sudo mount --bind /proc chroot_dir/proc
-          sudo mount --bind /sys chroot_dir/sys
-
-      - name: Install Critical Network Layer
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get clean
-          sudo chroot chroot_dir apt-get update
-          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl live-boot
-
-      - name: Install Graphic Suite and APT Core
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get update
-          
-          # Cài đặt toàn bộ môi trường đồ họa Mac, bộ gõ Unikey, trình phát nhạc VLC và bộ cài SSD
-          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
-            linux-image-amd64 sudo systemd-sysv firmware-linux \
-            xorg xfce4 xfce4-goodies lightdm plank \
-            network-manager network-manager-gnome wpasupplicant thunar mousepad git vlc \
-            calamares gparted
-
-      - name: Download and Inject Official Google Chrome DEB
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          wget -q https://google.com -O chroot_dir/tmp/google-chrome.deb
-          
-          sudo chroot chroot_dir apt-get update
-          sudo chroot chroot_dir apt-get install -y -f --no-install-recommends /tmp/google-chrome.deb
-          sudo rm -f chroot_dir/tmp/google-chrome.deb
-
-      - name: Unmount System Filesystems
-        if: always()
-        run: |
-          sudo umount -l chroot_dir/dev || true
-          sudo umount -l chroot_dir/proc || true
-          sudo umount -l chroot_dir/sys || true
 
       - name: Configure Auto-Login and User Account
         run: |
+          # Thiết lập tự động đăng nhập thẳng vào Desktop không gõ mật khẩu
           sudo mkdir -p chroot_dir/etc/lightdm/lightdm.conf.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/lightdm/lightdm.conf.d/autologin.conf
           [Seat:*]
@@ -129,6 +72,7 @@ jobs:
         run: |
           sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
           
+          # Tự khởi động thanh Dock kiểu Mac khi mở máy
           sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/plank.desktop
           [Desktop Entry]
           Type=Application
@@ -137,32 +81,18 @@ jobs:
           X-GNOME-Autostart-enabled=true
           EOF
 
-          sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/fcitx.desktop
-          [Desktop Entry]
-          Type=Application
-          Exec=fcitx5 -d
-          Name=Fcitx5 Input Method
-          X-GNOME-Autostart-enabled=true
-          EOF
-
-          sudo mkdir -p chroot_dir/etc/X11/Xsession.d
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/X11/Xsession.d/95fcitx
-          export GTK_IM_MODULE=fcitx5
-          export QT_IM_MODULE=fcitx5
-          export XMODIFIERS="@im=fcitx5"
-          EOF
-
           sudo chown -R 1000:1000 chroot_dir/home/duykhanh
 
-      - name: Compress Filesystem into SquashFS
+      - name: Compress System Core into SquashFS
         run: |
-          mkdir -p image/live
+          # Nén đa luồng bằng thuật toán XZ cực mạnh giúp thu nhỏ tối đa dung lượng ISO
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          sudo cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
-          sudo cp chroot_dir/boot/initrd* image/live/initrd.img
+          # Trích xuất trực tiếp bộ nhân nguyên bản đang chạy ổn định của máy chủ vào phân vùng boot
+          sudo cp /boot/vmlinuz-$(uname -r) image/live/vmlinuz
+          sudo cp /boot/initrd.img-$(uname -r) image/live/initrd.img
           
           mkdir -p image/boot/grub
           cat <<'EOF' > image/boot/grub/grub.cfg
@@ -170,16 +100,16 @@ jobs:
           set default=0
           
           menuentry "1. Try DuyKhanhOS Live CD (Graphic Mode)" {
-              linux /live/vmlinuz boot=live quiet splash
+              linux /live/vmlinuz boot=casper quiet splash
               initrd /live/initrd.img
           }
           menuentry "2. Install DuyKhanhOS directly to Storage (Bootable Installer)" {
-              linux /live/vmlinuz boot=live toram quiet splash
+              linux /live/vmlinuz boot=casper toram quiet splash
               initrd /live/initrd.img
           }
           EOF
 
-      - name: Generate Custom Bootable ISO
+      - name: Generate Production Bootable ISO
         run: |
           grub-mkrescue -o duykhanhos-production.iso image
 

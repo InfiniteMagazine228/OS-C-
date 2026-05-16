@@ -15,36 +15,55 @@ jobs:
       - name: Install ISO Generation Tools on Host
         run: |
           sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget debootstrap
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget
 
-      - name: Bootstrap System Core from Host Network
+      - name: Extract System Core via Safe Docker
         run: |
+          # 1. Khởi tạo và xóa sạch toàn bộ thư mục rác cũ để tránh trùng lặp cấu hình lỗi
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           
-          # PHƯƠNG PHÁP ÉP ĐƯỜNG DẪN 100%: Sử dụng file script cấu hình tĩnh /usr/share/debootstrap/scripts/noble 
-          # Kết hợp truyền trực tiếp tham số gương lưu trữ Hoa Kỳ vào RAM để chặn đứng hoàn toàn link ubuntu.com tự sinh
-          sudo debootstrap --variant=minbase --arch=amd64 noble chroot_dir http://ubuntu.com
+          # 2. KHẮC PHỤC 100% LỖI DEBOOTSTRAP: Lấy nhân hệ thống trực tiếp từ Docker Hub chính thức
+          docker create --name duykhanh_core ubuntu:noble
+          docker export duykhanh_core | tar -C chroot_dir -xf -
+          docker rm duykhanh_core
 
-      - name: Force Official Static Repositories
+      - name: Wipe and Recreate Pure Apt System
         run: |
-          sudo rm -f chroot_dir/etc/apt/sources.list.d/*.sources
-          sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
-          sudo rm -rf chroot_dir/etc/apt/apt.conf.d/*
+          # 3. DIỆT TẬN GỐC CONFIG ẨN: Đập tan hoàn toàn thư mục apt cũ chứa file ubuntu.sources gây lỗi nắn dòng mạng
+          sudo rm -rf chroot_dir/etc/apt
           
-          # Thiết lập kho lưu trữ chính thức dải IP Mỹ tĩnh không mã hóa để tránh lỗi Cert 404
+          # Dựng lại cấu trúc quản lý gói mới tinh sạch 100%
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
+          sudo mkdir -p chroot_dir/etc/apt/preferences.d
+          sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
+          sudo rm -rf chroot_dir/var/lib/apt/lists/*
+          
+          # 4. Ghi đè cứng kho lưu trữ thô gốc của Mỹ kèm đường dẫn /ubuntu/ chuẩn xác tuyệt đối
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
           deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
           deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse
           deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
           EOF
 
-          # Cho phép hệ thống tự động tìm luồng tải CDN chuẩn xác
+          # Cho phép CDN tự động sửa đường dẫn và đồng bộ luồng tải
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
           Acquire::http::AllowRedirect "true";
+          EOF
+
+      - name: Add Safe Native Chromium Mirror
+        run: |
+          # Tích hợp kho Linux Mint để chuẩn bị cài Chromium không dùng Snap
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/linuxmint.list
+          deb [trusted=yes] http://linuxmint.com wilma main upstream import backport
+          EOF
+          
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/preferences.d/99linuxmint
+          Package: chromium
+          Pin: release o=linuxmint
+          Pin-Priority: 1001
           EOF
 
       - name: Synchronize Network DNS
@@ -66,31 +85,22 @@ jobs:
       - name: Install Critical Network Layer
         run: |
           export DEBIAN_FRONTEND=noninteractive
+          sudo chroot chroot_dir apt-get clean
           sudo chroot chroot_dir apt-get update
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl
 
-      - name: Install Graphic Suite and APT Core Applications
+      - name: Install Graphic Suite and Core Applications
         run: |
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir apt-get update
           
-          # Cài đặt môi trường đồ họa Mac-RedStar, bộ gõ tiếng Việt Unikey, VLC, trình duyệt và bộ cài SSD Calamares
+          # Cài đặt môi trường đồ họa Mac-RedStar, Unikey, VLC, LibreOffice và Chromium bản DEB thuần
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv \
             xorg xfce4 xfce4-goodies lightdm plank \
-            network-manager network-manager-gnome wpasupplicant \
+            network-manager network-manager-gnome wpasupplicant chromium \
             fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
             calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted git
-
-      - name: Download and Inject Standalone Google Chrome Package
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          # Tải trực tiếp file cài đặt Google Chrome (.deb) từ Google để bỏ qua lỗi Snap của Ubuntu
-          wget -q https://google.com -O chroot_dir/tmp/google-chrome.deb
-          
-          sudo chroot chroot_dir apt-get update || true
-          sudo chroot chroot_dir apt-get install -y -f --allow-unauthenticated --no-install-recommends /tmp/google-chrome.deb
-          sudo rm -f chroot_dir/tmp/google-chrome.deb
 
       - name: Unmount System Filesystems
         if: always()
@@ -145,7 +155,7 @@ jobs:
           export XMODIFIERS="@im=fcitx"
           EOF
 
-          # Kích hoạt 2GB bộ nhớ RAM ảo đệm
+          # Thiết lập RAM ảo Swap 2GB cho hệ thống Live
           sudo mkdir -p chroot_dir/etc/local.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
           #!/bin/sh -e

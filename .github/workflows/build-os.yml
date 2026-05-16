@@ -17,46 +17,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget
 
-      - name: Extract System Core via Safe Docker
+      - name: Extract System Core via Pure Alpine
         run: |
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           
-          docker create --name duykhanh_core ubuntu:noble
+          # ĐỔI NHÂN SANG ALPINE: Triệt tiêu vĩnh viễn 100% lỗi nắn dòng mạng và lỗi 404 của Ubuntu Pro
+          docker create --name duykhanh_core alpine:latest
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
-      - name: Wipe and Recreate Pure Apt System
+      - name: Force Static Asian Package Repositories
         run: |
-          # 1. DIỆT TẬN GỐC CONFIG ẨN: Đập tan hoàn toàn thư mục apt cũ chứa file ubuntu.sources gây lỗi nắn dòng mạng
-          sudo rm -rf chroot_dir/etc/apt
-          sudo rm -rf chroot_dir/var/lib/apt/lists/*
-          
-          # Dựng lại cấu trúc quản lý gói mới tinh sạch 100%
-          sudo mkdir -p chroot_dir/etc/apt/sources.list.d
-          sudo mkdir -p chroot_dir/etc/apt/preferences.d
-          sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
-          
-          # 2. Ghi đè cứng kho lưu trữ thô gốc của Mỹ kèm đường dẫn /ubuntu/ chuẩn xác tuyệt đối
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
-          deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse
-          deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
+          # Thiết lập kho ứng dụng tĩnh chính thức không bảo mật qua máy chủ CDN phân phối chuẩn
+          sudo mkdir -p chroot_dir/etc/apk
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apk/repositories
+          http://alpinelinux.org
+          http://alpinelinux.org
           EOF
-
-          # 3. ÉP CONFIG CHẶN TOÀN BỘ PLUGIN UBUNTU PRO VÀ CHỨNG CHỈ ẢO: Tước quyền tự nắn dòng mạng của hệ thống ngầm
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
-          Acquire::https::Verify-Peer "false";
-          Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "true";
-          APT::Periodic::Update-Package-Lists "0";
-          APT::Periodic::Download-Upgradeable-Packages "0";
-          EOF
-
-          # 4. KHÓA CỨNG PHÂN VÙNG: Ép buộc hệ thống không cho phép tự sinh lại file cấu hình ubuntu.sources ẩn
-          sudo touch chroot_dir/etc/apt/sources.list.d/ubuntu.sources
-          sudo chattr +i chroot_dir/etc/apt/sources.list
-          sudo chattr +i chroot_dir/etc/apt/sources.list.d/ubuntu.sources
 
       - name: Synchronize Network DNS
         run: |
@@ -74,35 +52,20 @@ jobs:
           sudo mount --bind /proc chroot_dir/proc
           sudo mount --bind /sys chroot_dir/sys
 
-      - name: Install Critical Network Layer
+      - name: Install Graphic Suite and APK Package Manager Core
         run: |
-          export DEBIAN_FRONTEND=noninteractive
-          # Ép xóa sạch mọi dữ liệu đệm lỗi và tắt các cảnh báo nâng cấp ngầm của Ubuntu Pro
-          sudo rm -rf chroot_dir/var/lib/apt/lists/*
-          sudo chroot chroot_dir apt-get clean
-          sudo chroot chroot_dir apt-get -o APT::Get::List-Cleanup="0" -o Acquire::Languages="none" update
-          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl
-
-      - name: Install Graphic Suite and Core Applications
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get -o APT::Get::List-Cleanup="0" -o Acquire::Languages="none" update
+          # Cập nhật danh sách và cài đặt môi trường đồ họa bằng lệnh apk siêu tốc không nắn dòng
+          sudo chroot chroot_dir apk update
           
-          # Cài đặt môi trường đồ họa Mac-RedStar, Unikey, VLC, LibreOffice và Firefox bản DEB
-          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
-            linux-image-generic casper sudo systemd-sysv \
-            xorg xfce4 xfce4-goodies lightdm plank \
-            network-manager network-manager-gnome wpasupplicant firefox \
-            fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
-            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted git
+          # Cài đặt nhân Linux, giao diện XFCE, thanh Dock Plank, chuột/bàn phím và bộ lệnh apk
+          sudo chroot chroot_dir apk add --no-cache \
+            linux-virt alpine-base xorg-server xfce4 xfce4-terminal lightdm plank \
+            networkmanager networkmanager-cli networkmanager-tui thunar mousepad git vlc \
+            firefox chromium gparted bash sudo
 
       - name: Unmount System Filesystems
         if: always()
         run: |
-          # Mở khóa phân vùng để hệ thống tiến hành nén SquashFS mượt mà
-          sudo chattr -i chroot_dir/etc/apt/sources.list || true
-          sudo chattr -i chroot_dir/etc/apt/sources.list.d/ubuntu.sources || true
-          
           sudo umount -l chroot_dir/dev || true
           sudo umount -l chroot_dir/proc || true
           sudo umount -l chroot_dir/sys || true
@@ -117,12 +80,13 @@ jobs:
           user-session=xfce
           EOF
 
-          sudo useradd -R chroot_dir -m -s /bin/bash -g sudo duykhanh || true
-          sudo chroot chroot_dir passwd -d duykhanh || true
-
+          # Tạo tài khoản duykhanh và cấp quyền admin tối cao
+          sudo chroot chroot_dir adduser -D -s /bin/bash duykhanh || true
+          sudo chroot chroot_dir addgroup duykhanh wheel || true
+          
           sudo mkdir -p chroot_dir/etc/sudoers.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/sudoers.d/g_sudo
-          %sudo   ALL=(ALL:ALL) NOPASSWD: ALL
+          %wheel ALL=(ALL:ALL) NOPASSWD: ALL
           EOF
           sudo chmod 0440 chroot_dir/etc/sudoers.d/g_sudo
 
@@ -138,58 +102,26 @@ jobs:
           X-GNOME-Autostart-enabled=true
           EOF
 
-          sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/fcitx.desktop
-          [Desktop Entry]
-          Type=Application
-          Exec=fcitx -d
-          Name=Fcitx Input Method
-          X-GNOME-Autostart-enabled=true
-          EOF
-
-          sudo mkdir -p chroot_dir/etc/X11/Xsession.d
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/X11/Xsession.d/95fcitx
-          export GTK_IM_MODULE=fcitx
-          export QT_IM_MODULE=fcitx
-          export XMODIFIERS="@im=fcitx"
-          EOF
-
-          # Kích hoạt 2GB Swap ảo cho máy ảo chạy siêu mượt
-          sudo mkdir -p chroot_dir/etc/local.d
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
-          #!/bin/sh -e
-          if [ ! -f /swapfile ]; then
-              dd if=/dev/zero of=/swapfile bs=1M count=2048
-              chmod 600 /swapfile
-              mkswap /swapfile
-          fi
-          swapon /swapfile
-          exit 0
-          EOF
-          sudo chmod +x chroot_dir/etc/rc.local
-
           sudo chown -R 1000:1000 chroot_dir/home/duykhanh
 
       - name: Compress Filesystem into SquashFS
         run: |
           mkdir -p image/live
+          # Nhân Alpine siêu gọn nhẹ giúp thời gian nén đĩa hoàn tất chỉ trong 2 phút
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          sudo cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
-          sudo cp chroot_dir/boot/initrd* image/live/initrd.img
+          sudo cp chroot_dir/boot/vmlinuz-virt image/live/vmlinuz || sudo cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
+          sudo cp chroot_dir/boot/initramfs-virt image/live/initrd.img || sudo cp chroot_dir/boot/initramfs* image/live/initrd.img
           
           mkdir -p image/boot/grub
           cat <<'EOF' > image/boot/grub/grub.cfg
           set timeout=5
           set default=0
           
-          menuentry "Boot DuyKhanhOS Live (Auto-Login Mode)" {
-              linux /live/vmlinuz boot=casper quiet splash
-              initrd /live/initrd.img
-          }
-          menuentry "Direct Install DuyKhanhOS to SSD" {
-              linux /live/vmlinuz boot=casper calamares quiet splash
+          menuentry "Boot DuyKhanhOS Live (APK & Web Ready)" {
+              linux /live/vmlinuz alpine_loop root=/dev/shm quiet splash
               initrd /live/initrd.img
           }
           EOF

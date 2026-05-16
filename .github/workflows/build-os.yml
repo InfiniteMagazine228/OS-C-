@@ -26,23 +26,34 @@ jobs:
 
       - name: Wipe and Recreate Clean Apt System
         run: |
-          sudo rm -rf chroot_dir/etc/apt
+          # 1. Xóa toàn bộ các file nguồn cấu hình cũ của Docker
+          sudo rm -f chroot_dir/etc/apt/sources.list.d/ubuntu.sources
+          sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
+          sudo rm -rf chroot_dir/etc/apt/apt.conf.d/*
           
+          # 2. Tạo file nguồn tĩnh nguyên bản sử dụng http thô không mã hóa
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
-          sudo mkdir -p chroot_dir/etc/apt/preferences.d
-          sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
-          
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
           deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
           deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse
           deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
           EOF
 
+          # 3. Ép cấu hình chặn hoàn toàn tính năng tự động chuyển hướng mạng
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
           Acquire::http::AllowRedirect "false";
           EOF
+
+      - name: Force Sed Clean Global Ubuntu Config
+        run: |
+          # PHƯƠNG PHÁP DIỆT TẬN GỐC: Tìm toàn bộ tất cả các file bên trong hệ thống chroot, 
+          # nếu file nào chứa chữ "http://ubuntu.com" hoặc "https://ubuntu.com" thì đổi cứng thành link us.archive.ubuntu.com
+          sudo find chroot_dir/etc/apt/ -type f -exec sed -i 's|http://ubuntu.com|http://us.archive.ubuntu.com|g' {} + || true
+          sudo find chroot_dir/etc/apt/ -type f -exec sed -i 's|https://ubuntu.com|http://us.archive.ubuntu.com|g' {} + || true
+          sudo find chroot_dir/var/lib/apt/ -type f -exec sed -i 's|http://ubuntu.com|http://us.archive.ubuntu.com|g' {} + || true
+          sudo find chroot_dir/var/lib/apt/ -type f -exec sed -i 's|https://ubuntu.com|http://us.archive.ubuntu.com|g' {} + || true
 
       - name: Synchronize Network DNS
         run: |
@@ -53,7 +64,6 @@ jobs:
           sudo rm -f chroot_dir/dev/null
           sudo mknod -m 666 chroot_dir/dev/null c 1 3
           
-          # SỬA LỖI ĐẶC QUYỀN: Cấp quyền tối cao cho thư mục ghi dữ liệu tạm thời /tmp để kích hoạt GPG
           sudo mkdir -p chroot_dir/tmp
           sudo chmod 1777 chroot_dir/tmp
           
@@ -64,12 +74,11 @@ jobs:
       - name: Install Critical Network Layer
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get update
+          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl
 
       - name: Add Native Firefox PPA
         run: |
-          # SỬA LỖI 403: Cập nhật chuẩn xác máy chủ lưu trữ chính thức của Mozilla Team
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/mozillateam.list
           deb [trusted=yes] http://launchpad.net noble main
           EOF
@@ -83,8 +92,9 @@ jobs:
       - name: Install Graphic Suite and Core Applications
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get update
+          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update
           
+          # Tiến hành tải mượt mà bộ ứng dụng đồ họa và bộ gõ tiếng Việt từ kho lưu trữ sạch
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv \
             xorg xfce4 xfce4-goodies lightdm plank \
@@ -97,7 +107,7 @@ jobs:
           wget -q https://steampowered.com -O chroot_dir/tmp/steam.deb
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir dpkg --add-architecture i386
-          sudo chroot chroot_dir apt-get update || true
+          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update || true
           sudo chroot chroot_dir apt-get install -y -f --allow-unauthenticated --no-install-recommends /tmp/steam.deb
           sudo rm -f chroot_dir/tmp/steam.deb
 

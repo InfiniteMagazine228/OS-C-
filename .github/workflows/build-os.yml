@@ -14,37 +14,35 @@ jobs:
 
       - name: Install ISO Generation Tools on Host
         run: |
-          # 1. Cập nhật và cài đặt công cụ sinh file ảnh đĩa ISO chuẩn
           sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools curl git
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools curl git rsync
 
       - name: Configure and Install All Apps Directly on Host
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          # 2. Tải toàn bộ môi trường đồ họa Mac-RedStar, bộ gõ Unikey và các phần mềm bạn yêu cầu trực tiếp lên Host ngoài
+          # Tải toàn bộ môi trường đồ họa Mac-RedStar, bộ gõ Unikey và các phần mềm bạn yêu cầu trực tiếp lên Host ngoài
           sudo apt-get install -y --no-install-recommends \
             casper xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant \
             vlc libreoffice mousepad thunar gparted \
             calamares calamares-settings-ubuntu-common calamares-settings-lubuntu
 
-      - name: Install Standalone Steam Package
+      - name: Install Steam From Official Ubuntu Multiverse
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          # 3. Kích hoạt kiến trúc i386 cho Steam và cài đặt file deb chính thức từ Valve
+          # 1. Kích hoạt kiến trúc 32-bit (i386) bắt buộc cho các thư viện game của Steam
           sudo dpkg --add-architecture i386
-          sudo apt-get update || true
-          sudo wget -q https://steampowered.com -O /tmp/steam.deb
-          sudo apt-get install -y -f --no-install-recommends /tmp/steam.deb
+          sudo apt-get update
+          
+          # 2. SỬA LỖI 100%: Cài đặt Steam trực tiếp từ kho multiverse của Ubuntu, bỏ qua wget lỗi chữ ký file
+          sudo apt-get install -y --no-install-recommends steam
 
       - name: Structure Live ISO System Files
         run: |
-          # 4. Chuẩn bị cây thư mục đóng gói ảnh đĩa
           mkdir -p chroot_dir
           mkdir -p image/live
           
-          # 5. Sao chép toàn bộ nhân Linux thực tế, thư viện hệ thống và ứng dụng đang chạy của Host vào thư mục đóng gói
-          # Phương pháp sao chép hệ thống chạy trực tiếp này bỏ qua hoàn toàn debootstrap hỏng
+          # Sao chép toàn bộ nhân Linux thực tế, thư viện hệ thống và ứng dụng đang chạy của Host vào thư mục đóng gói
           sudo rsync -a --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/run --exclude=/tmp --exclude=/chroot_dir --exclude=/image / chroot_dir/
 
           # Khởi tạo lại các thư mục hệ thống trống
@@ -53,7 +51,6 @@ jobs:
 
       - name: Configure Auto-Login and User Account
         run: |
-          # 6. Thiết lập tự động đăng nhập thẳng vào màn hình Desktop cho tài khoản duykhanh
           sudo mkdir -p chroot_dir/etc/lightdm/lightdm.conf.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/lightdm/lightdm.conf.d/autologin.conf
           [Seat:*]
@@ -102,12 +99,11 @@ jobs:
 
       - name: Compress System into SquashFS
         run: |
-          # 7. Tiến hành nén đa luồng toàn bộ hệ thống ứng dụng sạch vừa tạo
+          # Tiến hành nén đa luồng toàn bộ hệ thống ứng dụng sạch vừa tạo
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          # 8. Trích xuất nhân boot ra ngoài phân vùng đĩa ISO
           sudo cp /boot/vmlinuz-$(uname -r) image/live/vmlinuz
           sudo cp /boot/initrd.img-$(uname -r) image/live/initrd.img
           
@@ -128,7 +124,6 @@ jobs:
 
       - name: Generate Production Bootable ISO
         run: |
-          # 9. Đóng gói đĩa ISO hoàn chỉnh để ghi thẳng vào SSD hoặc USB 32GB
           grub-mkrescue -o duykhanhos-production.iso image
 
       - name: Upload Finished System ISO

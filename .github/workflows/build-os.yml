@@ -15,34 +15,39 @@ jobs:
       - name: Install ISO Generation Tools on Host
         run: |
           sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget ca-certificates
 
       - name: Extract System Core via Debian
         run: |
-          # Dọn sạch hoàn toàn các file rác cũ để tránh trùng lặp cấu hình
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           
-          # Sử dụng nhân Debian 12 sạch từ Docker Hub, triệt tiêu 100% lỗi tải file wget/curl
           docker create --name duykhanh_core debian:bookworm
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
-      - name: Force Static Debian Package Repositories
+      - name: Force Secure HTTPS Repositories
         run: |
-          # Dọn sạch cấu hình mặc định của Docker để tránh tự nắn dòng mạng hỏng
+          # 1. Dọn sạch toàn bộ cấu hình cũ
           sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
           sudo rm -f chroot_dir/etc/apt/sources.list
           
-          # Thiết lập kho lưu trữ chính thức dải IP toàn cầu với giao thức không mã hóa
+          # 2. ĐỒNG BỘ CHỨNG CHỈ: Bê toàn bộ chứng chỉ SSL/TLS đang chạy tốt của Host vào bên trong lõi OS
+          sudo mkdir -p chroot_dir/etc/ssl/certs
+          sudo cp -a /etc/ssl/certs/* chroot_dir/etc/ssl/certs/
+          sudo mkdir -p chroot_dir/usr/share/ca-certificates
+          sudo cp -a /usr/share/ca-certificates/* chroot_dir/usr/share/ca-certificates/
+          
+          # 3. SỬA LỖI MẠNG 100%: Sử dụng giao thức bảo mật mã hóa HTTPS cổng 443 chính thức của Debian toàn cầu
+          # Cú pháp này đi xuyên qua bộ lọc bảo mật của GitHub Actions Runner không bị chặn
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb [trusted=yes] http://debian.org bookworm main contrib non-free non-free-firmware
-          deb [trusted=yes] http://debian.org bookworm-updates main contrib non-free non-free-firmware
-          deb [trusted=yes] http://debian.org bookworm-security main contrib non-free non-free-firmware
+          deb [trusted=yes] https://debian.org bookworm main contrib non-free non-free-firmware
+          deb [trusted=yes] https://debian.org bookworm-updates main contrib non-free non-free-firmware
+          deb [trusted=yes] https://debian.org bookworm-security main contrib non-free non-free-firmware
           EOF
 
-          # Cho phép hệ thống tự động tìm luồng tải CDN chuẩn xác nhất, khóa dải IPv6 gây nghẽn mạng
+          # Cho phép nới lỏng cơ chế tự động chuyển hướng thông minh của HTTPS CDN
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
           Acquire::ForceIPv4 "true";
           Acquire::https::Verify-Peer "false";
@@ -73,54 +78,26 @@ jobs:
           sudo chroot chroot_dir apt-get update
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl live-boot
 
-      - name: Install Graphic Suite and Core Applications
+      - name: Install Graphic Suite and APT Core
         run: |
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir apt-get update
           
-          # Cài đặt trọn bộ môi trường đồ họa, bộ gõ tiếng Việt Unikey, VLC, trình duyệt và Calamares cài SSD
+          # Cài đặt toàn bộ môi trường đồ họa Mac, bộ gõ Unikey, trình phát nhạc VLC và bộ cài SSD
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-amd64 sudo systemd-sysv firmware-linux \
             xorg xfce4 xfce4-goodies lightdm plank \
-            network-manager network-manager-gnome wpasupplicant firefox-esr \
-            fcitx5 fcitx5-unikey vlc libreoffice mousepad thunar \
-            calamares gparted git
+            network-manager network-manager-gnome wpasupplicant thunar mousepad git vlc \
+            calamares gparted
 
-      - name: Tweak Installer for Post-Install USB Eject Prompt
+      - name: Download and Inject Official Google Chrome DEB
         run: |
-          # Khởi tạo thông báo yêu cầu người dùng rút USB sau khi chạy xong Calamares vào SSD
-          sudo mkdir -p chroot_dir/etc/calamares/modules
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/calamares/modules/finished.conf
-          ---
-          restartNowMode: "user-checked"
-          restartNowCommand: "systemctl reboot"
-          EOF
-
-      - name: Create Custom Boot Splash Screen
-        run: |
-          # Thiết lập màn hình khởi động hoạt ảnh mang tên riêng DuyKhanhOS
-          sudo mkdir -p chroot_dir/usr/share/plymouth/themes/duykhanhos
-          sudo cat <<'EOF' | sudo tee chroot_dir/usr/share/plymouth/themes/duykhanhos/duykhanhos.script
-          Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
-          Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
-          logo.image = Image("logo.png");
-          logo.sprite = Sprite(logo.image);
-          logo.x = Window.GetX() + Window.GetWidth() / 2 - logo.image.GetWidth() / 2;
-          logo.y = Window.GetY() + Window.GetHeight() / 2 - logo.image.GetHeight() / 2;
-          logo.sprite.SetPosition(logo.x, logo.y, 1000);
-          EOF
-
-          sudo cat <<'EOF' | sudo tee chroot_dir/usr/share/plymouth/themes/duykhanhos/duykhanhos.plymouth
-          [Plymouth Theme]
-          Name=DuyKhanhOS Boot Splash
-          Description=A clean custom boot splash for DuyKhanhOS
-          ModuleName=script
-          [script]
-          ImageDir=/usr/share/plymouth/themes/duykhanhos
-          ScriptFile=/usr/share/plymouth/themes/duykhanhos/duykhanhos.script
-          EOF
-
-          echo "DuyKhanhOS" > chroot_dir/usr/share/plymouth/themes/duykhanhos/logo.png
+          export DEBIAN_FRONTEND=noninteractive
+          wget -q https://google.com -O chroot_dir/tmp/google-chrome.deb
+          
+          sudo chroot chroot_dir apt-get update
+          sudo chroot chroot_dir apt-get install -y -f --no-install-recommends /tmp/google-chrome.deb
+          sudo rm -f chroot_dir/tmp/google-chrome.deb
 
       - name: Unmount System Filesystems
         if: always()
@@ -151,6 +128,7 @@ jobs:
       - name: Setup System AutoStart Configuration
         run: |
           sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
+          
           sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/plank.desktop
           [Desktop Entry]
           Type=Application

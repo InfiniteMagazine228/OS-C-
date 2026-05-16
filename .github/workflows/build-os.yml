@@ -30,14 +30,15 @@ jobs:
           sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
           sudo rm -rf chroot_dir/etc/apt/apt.conf.d/*
           
-          # KHÓA CỨNG HTTPS: Ép buộc dùng phương thức mirror+http để APT không tự ý đổi sang https://www.digitalocean.com
+          # SỬA LỖI 100%: Sử dụng kho thô nguyên bản http://ubuntu.com bằng HTTP tĩnh tuyệt đối
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb [trusted=yes] mirror+http://digitalocean.com noble main restricted universe multiverse
-          deb [trusted=yes] mirror+http://digitalocean.com noble-updates main restricted universe multiverse
-          deb [trusted=yes] mirror+http://digitalocean.com noble-security main restricted universe multiverse
+          deb [trusted=yes] http://ubuntu.com/ubuntu/ noble main restricted universe multiverse
+          deb [trusted=yes] http://ubuntu.com/ubuntu/ noble-updates main restricted universe multiverse
+          deb [trusted=yes] http://ubuntu.com/ubuntu/ noble-security main restricted universe multiverse
           EOF
 
+          # Khóa cứng tính năng nắn dòng (Redirect) để APT không bị các nhà mạng tự ý chuyển hướng file
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
@@ -80,6 +81,7 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir apt-get update
           
+          # Tải xuống môi trường đồ họa Mac-RedStar, Unikey, VLC, LibreOffice từ kho tĩnh
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv \
             xorg xfce4 xfce4-goodies lightdm plank \
@@ -149,7 +151,7 @@ jobs:
           export XMODIFIERS="@im=fcitx"
           EOF
 
-          # THÊM SƠ ĐỒ SWAP TỰ ĐỘNG: Tạo phân vùng RAM ảo 2GB giúp Chromium lướt mạng không bao giờ bị đơ máy ảo
+          # TỰ ĐỘNG KÍCH HOẠT PHÂN VÙNG SWAP 2GB NGAY KHI LIVE ISO BOOT LÊN MÁY ẢO
           sudo mkdir -p chroot_dir/etc/local.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
           #!/bin/sh -e

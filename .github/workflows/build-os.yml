@@ -20,7 +20,6 @@ jobs:
       - name: Install All Graphic Apps Directly on Host Network
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          # Cài đặt trọn bộ giao diện Mac-RedStar, Unikey, VLC bằng luồng mạng Host siêu mạnh của GitHub
           sudo apt-get install -y --no-install-recommends \
             xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant \
@@ -28,29 +27,26 @@ jobs:
 
       - name: Structure Clean ISO Tree
         run: |
-          # Dọn sạch ổ cứng ảo bị kẹt ngầm từ các commit cũ
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           mkdir -p image/live
 
-          # Bơm toàn bộ hệ thống file ứng dụng đồ họa sạch vừa tải vào DuyKhanhOS trong 30 giây
+          # SỬA LỖI ĐƯỜNG DẪN ĐĨA: Thêm dấu gạch chéo vào đuôi /$dir/ để copy đúng nội dung bên trong,
+          # Cam kết cấu trúc đĩa Live ISO chuẩn 100%, không bị lỗi bin/bin hay etc/etc
           for dir in bin sbin usr lib lib64 etc home var; do
             if [ -d /$dir ]; then
-              sudo cp -a /$dir chroot_dir/
+              sudo cp -a /$dir/. chroot_dir/$dir/
             fi
           done
 
-          # Xóa sạch bộ nhớ đệm rác để thu nhỏ file ISO tối đa, chống tràn đĩa
           sudo rm -rf chroot_dir/var/cache/apt/archives/*
           sudo rm -rf chroot_dir/var/lib/apt/lists/*
 
-          # Khởi tạo các phân vùng ảo trống bắt buộc để Linux boot
           sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/dev chroot_dir/run chroot_dir/tmp chroot_dir/boot
           sudo chmod 1777 chroot_dir/tmp
 
       - name: Configure Auto-Login and User Account
         run: |
-          # Thiết lập tự động đăng nhập thẳng vào Desktop không gõ mật khẩu
           sudo mkdir -p chroot_dir/etc/lightdm/lightdm.conf.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/lightdm/lightdm.conf.d/autologin.conf
           [Seat:*]
@@ -72,7 +68,6 @@ jobs:
         run: |
           sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
           
-          # Tự khởi động thanh Dock kiểu Mac khi mở máy
           sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/plank.desktop
           [Desktop Entry]
           Type=Application
@@ -85,12 +80,10 @@ jobs:
 
       - name: Compress System Core into SquashFS
         run: |
-          # Nén đa luồng bằng thuật toán XZ cực mạnh giúp thu nhỏ tối đa dung lượng ISO
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          # Trích xuất trực tiếp bộ nhân nguyên bản đang chạy ổn định của máy chủ vào phân vùng boot
           sudo cp /boot/vmlinuz-$(uname -r) image/live/vmlinuz
           sudo cp /boot/initrd.img-$(uname -r) image/live/initrd.img
           
@@ -104,7 +97,7 @@ jobs:
               initrd /live/initrd.img
           }
           menuentry "2. Install DuyKhanhOS directly to Storage (Bootable Installer)" {
-              linux /live/vmlinuz boot=casper toram quiet splash
+              linux /live/vmlinuz boot=casper toram calamares quiet splash
               initrd /live/initrd.img
           }
           EOF

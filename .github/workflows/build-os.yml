@@ -12,27 +12,41 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install ISO Generation Tools on Host
+      - name: Install Pure Host Construction Tools
         run: |
+          # 1. Cài đặt toàn bộ công cụ đóng gói và nhân Linux từ luồng mạng Host ngoài siêu mạnh
           sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget debootstrap
 
-      - name: Extract System Core via Pure Alpine
+      - name: Bootstrap System Core from Host Network
         run: |
+          # 2. Xóa sạch thư mục cũ và khởi tạo nhân OS bằng lệnh độc lập từ Host ngoài
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           
-          docker create --name duykhanh_core alpine:latest
-          docker export duykhanh_core | tar -C chroot_dir -xf -
-          docker rm duykhanh_core
+          # Tiến hành tải nhân Linux sạch từ máy chủ chính thức của Mỹ, bỏ qua 100% lỗi Docker
+          sudo debootstrap --variant=minbase --no-check-gpg noble chroot_dir http://ubuntu.com
 
-      - name: Force Static Asian Package Repositories
+      - name: Force Official Static Repositories
         run: |
-          # SỬA LỖI 404: Thay đổi đường dẫn kho chuẩn xác sang từ khóa latest-stable và bỏ chữ 'v' lỗi
-          sudo mkdir -p chroot_dir/etc/apk
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apk/repositories
-          http://alpinelinux.org
-          http://alpinelinux.org
+          # 3. Xóa sạch mọi file cấu hình ẩn bám theo để triệt tiêu vĩnh viễn link lỗi ubuntu.com
+          sudo rm -f chroot_dir/etc/apt/sources.list.d/*.sources
+          sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
+          sudo rm -rf chroot_dir/etc/apt/apt.conf.d/*
+          
+          # Thiết lập kho lưu trữ chính thức dải IP Mỹ tĩnh không mã hóa
+          sudo mkdir -p chroot_dir/etc/apt/sources.list.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
+          deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
+          deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse
+          deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
+          EOF
+
+          # Khóa chặt các cơ chế tự động chuyển hướng mạng gây lỗi 301/404
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
+          Acquire::https::Verify-Peer "false";
+          Acquire::AllowInsecureRepositories "true";
+          Acquire::http::AllowRedirect "false";
           EOF
 
       - name: Synchronize Network DNS
@@ -51,16 +65,29 @@ jobs:
           sudo mount --bind /proc chroot_dir/proc
           sudo mount --bind /sys chroot_dir/sys
 
-      - name: Install Graphic Suite and APK Package Manager Core
+      - name: Install Graphic Suite and APT Core Applications
         run: |
-          # Thực hiện cập nhật danh sách và cài đặt môi trường đồ họa bằng lệnh apk sạch 100%
-          sudo chroot chroot_dir apk update
+          export DEBIAN_FRONTEND=noninteractive
+          # Thực hiện cập nhật từ kho lưu trữ sạch không chuyển hướng
+          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update
           
-          # Cài đặt nhân Linux, giao diện XFCE, thanh Dock Plank, chuột/bàn phím và bộ lệnh apk
-          sudo chroot chroot_dir apk add --no-cache \
-            linux-virt alpine-base xorg-server xfce4 xfce4-terminal lightdm plank \
-            networkmanager networkmanager-cli networkmanager-tui thunar mousepad git vlc \
-            firefox chromium gparted bash sudo
+          # Cài đặt môi trường đồ họa Mac-RedStar, bộ gõ tiếng Việt Unikey, VLC, trình duyệt và bộ cài SSD Calamares
+          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
+            linux-image-generic casper sudo systemd-sysv ca-certificates \
+            xorg xfce4 xfce4-goodies lightdm plank \
+            network-manager network-manager-gnome wpasupplicant \
+            fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
+            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted curl git
+
+      - name: Download and Inject Standalone Google Chrome Package
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          # Tải trực tiếp file cài đặt Google Chrome (.deb) từ Google để bỏ qua lỗi Snap của Ubuntu
+          wget -q https://google.com -O chroot_dir/tmp/google-chrome.deb
+          
+          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update || true
+          sudo chroot chroot_dir apt-get install -y -f --allow-unauthenticated --no-install-recommends /tmp/google-chrome.deb
+          sudo rm -f chroot_dir/tmp/google-chrome.deb
 
       - name: Unmount System Filesystems
         if: always()
@@ -79,17 +106,16 @@ jobs:
           user-session=xfce
           EOF
 
-          # Tạo tài khoản duykhanh và cấp quyền admin tối cao
-          sudo chroot chroot_dir adduser -D -s /bin/bash duykhanh || true
-          sudo chroot chroot_dir addgroup duykhanh wheel || true
-          
+          sudo chroot chroot_dir useradd -m -s /bin/bash -g sudo duykhanh || true
+          sudo chroot chroot_dir passwd -d duykhanh || true
+
           sudo mkdir -p chroot_dir/etc/sudoers.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/sudoers.d/g_sudo
-          %wheel ALL=(ALL:ALL) NOPASSWD: ALL
+          %sudo   ALL=(ALL:ALL) NOPASSWD: ALL
           EOF
           sudo chmod 0440 chroot_dir/etc/sudoers.d/g_sudo
 
-      - name: Setup System AutoStart Configuration
+      - name: Setup System AutoStart and Swap Optimization
         run: |
           sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
           
@@ -101,26 +127,58 @@ jobs:
           X-GNOME-Autostart-enabled=true
           EOF
 
+          sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/fcitx.desktop
+          [Desktop Entry]
+          Type=Application
+          Exec=fcitx -d
+          Name=Fcitx Input Method
+          X-GNOME-Autostart-enabled=true
+          EOF
+
+          sudo mkdir -p chroot_dir/etc/X11/Xsession.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/X11/Xsession.d/95fcitx
+          export GTK_IM_MODULE=fcitx
+          export QT_IM_MODULE=fcitx
+          export XMODIFIERS="@im=fcitx"
+          EOF
+
+          # Tạo 2GB RAM ảo đệm bảo vệ hệ thống
+          sudo mkdir -p chroot_dir/etc/local.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
+          #!/bin/sh -e
+          if [ ! -f /swapfile ]; then
+              dd if=/dev/zero of=/swapfile bs=1M count=2048
+              chmod 600 /swapfile
+              mkswap /swapfile
+          fi
+          swapon /swapfile
+          exit 0
+          EOF
+          sudo chmod +x chroot_dir/etc/rc.local
+
           sudo chown -R 1000:1000 chroot_dir/home/duykhanh
 
       - name: Compress Filesystem into SquashFS
         run: |
           mkdir -p image/live
-          # Nén siêu tốc đa luồng nhân Alpine cực kỳ tinh gọn
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          sudo cp chroot_dir/boot/vmlinuz-virt image/live/vmlinuz || sudo cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
-          sudo cp chroot_dir/boot/initramfs-virt image/live/initrd.img || sudo cp chroot_dir/boot/initramfs* image/live/initrd.img
+          sudo cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
+          sudo cp chroot_dir/boot/initrd* image/live/initrd.img
           
           mkdir -p image/boot/grub
           cat <<'EOF' > image/boot/grub/grub.cfg
           set timeout=5
           set default=0
           
-          menuentry "Boot DuyKhanhOS Live (APK & Web Ready)" {
-              linux /live/vmlinuz alpine_loop root=/dev/shm quiet splash
+          menuentry "Boot DuyKhanhOS Live (Auto-Login Mode)" {
+              linux /live/vmlinuz boot=casper quiet splash
+              initrd /live/initrd.img
+          }
+          menuentry "Direct Install DuyKhanhOS to SSD" {
+              linux /live/vmlinuz boot=casper calamares quiet splash
               initrd /live/initrd.img
           }
           EOF

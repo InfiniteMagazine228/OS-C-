@@ -28,40 +28,27 @@ jobs:
 
       - name: Wipe and Recreate Pure Apt System
         run: |
-          # DIỆT TẬN GỐC CONFIG CŨ: Xóa sạch toàn bộ cấu hình cũ của Docker để tránh bị nắn dòng mạng lỗi
+          # 1. DIỆT TẬN GỐC CACHE CŨ: Xóa sạch toàn bộ thư mục apt và lists rác bám theo từ commit cũ của Docker
           sudo rm -rf chroot_dir/etc/apt
+          sudo rm -rf chroot_dir/var/lib/apt/lists/*
           
           # Dựng lại cấu trúc quản lý gói mới tinh sạch 100%
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           sudo mkdir -p chroot_dir/etc/apt/preferences.d
           sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
-          sudo rm -rf chroot_dir/var/lib/apt/lists/*
           
-          # Ghi đè cứng kho lưu trữ thô gốc của Mỹ bằng HTTP tĩnh (Không bao giờ lỗi 404)
+          # 2. Ghi đè cứng kho lưu trữ thô gốc của Mỹ kèm đường dẫn /ubuntu/ chuẩn xác tuyệt đối
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
           deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
           deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse
           deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
           EOF
 
-          # KHÓA CHẶT CHUYỂN HƯỚNG: Chặn đứng tình trạng tự ý nắn dòng sang HTTPS lỗi của các nhà mạng
+          # 3. BẬT ALLOWREDIRECT=TRUE: Cho phép CDN tự động sửa đường dẫn và đồng bộ luồng tải thông minh
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "false";
-          EOF
-
-      - name: Add Safe Native Chromium Mirror
-        run: |
-          # SỬA LỖI MINT 404: Ép buộc điền chính xác liên kết kho tĩnh packages.linuxmint.com thay vì trang chủ
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/linuxmint.list
-          deb [trusted=yes] http://linuxmint.com wilma main upstream import backport
-          EOF
-          
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/preferences.d/99linuxmint
-          Package: chromium
-          Pin: release o=linuxmint
-          Pin-Priority: 1001
+          Acquire::http::AllowRedirect "true";
           EOF
 
       - name: Synchronize Network DNS
@@ -83,19 +70,22 @@ jobs:
       - name: Install Critical Network Layer
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update
+          # Ép xóa sạch mọi dữ liệu đệm lỗi trước khi chạy update
+          sudo rm -rf chroot_dir/var/lib/apt/lists/*
+          sudo chroot chroot_dir apt-get clean
+          sudo chroot chroot_dir apt-get update
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl
 
       - name: Install Graphic Suite and Core Applications
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update
+          sudo chroot chroot_dir apt-get update
           
-          # Cài đặt môi trường đồ họa Mac-RedStar, Unikey, VLC, LibreOffice và Chromium bản DEB thuần không dính Snap
+          # Cài đặt môi trường đồ họa Mac-RedStar, Unikey, VLC, LibreOffice và Firefox bản DEB
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv \
             xorg xfce4 xfce4-goodies lightdm plank \
-            network-manager network-manager-gnome wpasupplicant chromium \
+            network-manager network-manager-gnome wpasupplicant firefox \
             fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
             calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted git
 
@@ -125,7 +115,7 @@ jobs:
           EOF
           sudo chmod 0440 chroot_dir/etc/sudoers.d/g_sudo
 
-      - name: Setup System AutoStart and Swap Optimization
+      - name: Setup System AutoStart Configuration
         run: |
           sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
           
@@ -152,7 +142,7 @@ jobs:
           export XMODIFIERS="@im=fcitx"
           EOF
 
-          # Kích hoạt RAM ảo 2GB
+          # Kích hoạt 2GB Swap ảo cho máy ảo chạy siêu mượt
           sudo mkdir -p chroot_dir/etc/local.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
           #!/bin/sh -e

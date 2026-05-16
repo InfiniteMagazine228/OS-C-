@@ -28,7 +28,7 @@ jobs:
 
       - name: Wipe and Recreate Pure Apt System
         run: |
-          # 1. DIỆT TẬN GỐC CACHE CŨ: Xóa sạch toàn bộ thư mục apt và lists rác bám theo từ commit cũ của Docker
+          # 1. DIỆT TẬN GỐC CONFIG ẨN: Đập tan hoàn toàn thư mục apt cũ chứa file ubuntu.sources gây lỗi nắn dòng mạng
           sudo rm -rf chroot_dir/etc/apt
           sudo rm -rf chroot_dir/var/lib/apt/lists/*
           
@@ -44,12 +44,19 @@ jobs:
           deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
           EOF
 
-          # 3. BẬT ALLOWREDIRECT=TRUE: Cho phép CDN tự động sửa đường dẫn và đồng bộ luồng tải thông minh
+          # 3. ÉP CONFIG CHẶN TOÀN BỘ PLUGIN UBUNTU PRO VÀ CHỨNG CHỈ ẢO: Tước quyền tự nắn dòng mạng của hệ thống ngầm
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
           Acquire::http::AllowRedirect "true";
+          APT::Periodic::Update-Package-Lists "0";
+          APT::Periodic::Download-Upgradeable-Packages "0";
           EOF
+
+          # 4. KHÓA CỨNG PHÂN VÙNG: Ép buộc hệ thống không cho phép tự sinh lại file cấu hình ubuntu.sources ẩn
+          sudo touch chroot_dir/etc/apt/sources.list.d/ubuntu.sources
+          sudo chattr +i chroot_dir/etc/apt/sources.list
+          sudo chattr +i chroot_dir/etc/apt/sources.list.d/ubuntu.sources
 
       - name: Synchronize Network DNS
         run: |
@@ -70,16 +77,16 @@ jobs:
       - name: Install Critical Network Layer
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          # Ép xóa sạch mọi dữ liệu đệm lỗi trước khi chạy update
+          # Ép xóa sạch mọi dữ liệu đệm lỗi và tắt các cảnh báo nâng cấp ngầm của Ubuntu Pro
           sudo rm -rf chroot_dir/var/lib/apt/lists/*
           sudo chroot chroot_dir apt-get clean
-          sudo chroot chroot_dir apt-get update
+          sudo chroot chroot_dir apt-get -o APT::Get::List-Cleanup="0" -o Acquire::Languages="none" update
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl
 
       - name: Install Graphic Suite and Core Applications
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get update
+          sudo chroot chroot_dir apt-get -o APT::Get::List-Cleanup="0" -o Acquire::Languages="none" update
           
           # Cài đặt môi trường đồ họa Mac-RedStar, Unikey, VLC, LibreOffice và Firefox bản DEB
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
@@ -92,6 +99,10 @@ jobs:
       - name: Unmount System Filesystems
         if: always()
         run: |
+          # Mở khóa phân vùng để hệ thống tiến hành nén SquashFS mượt mà
+          sudo chattr -i chroot_dir/etc/apt/sources.list || true
+          sudo chattr -i chroot_dir/etc/apt/sources.list.d/ubuntu.sources || true
+          
           sudo umount -l chroot_dir/dev || true
           sudo umount -l chroot_dir/proc || true
           sudo umount -l chroot_dir/sys || true

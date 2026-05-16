@@ -14,52 +14,142 @@ jobs:
 
       - name: Install Pure ISO Generation Tools
         run: |
-          # Chỉ cài đặt duy nhất công cụ đúc đĩa cơ bản, không chạy apt nâng cấp hệ thống để tránh lỗi 100
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools rsync casper plymouth plymouth-themes
+
+      - name: Install Graphic Suite and NetworkManager on Host
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get install -y --no-install-recommends \
+            xorg xfce4 xfce4-goodies lightdm plank \
+            network-manager network-manager-gnome wpasupplicant firefox calamares
 
       - name: Structure Clean ISO Tree
         run: |
-          # Xóa sạch toàn bộ dữ liệu rác cũ để giải phóng đĩa cứng ảo bị tràn
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           mkdir -p image/live
 
-          # Chỉ sao chép các tệp tin nhị phân cốt lõi cơ bản nhất để hệ thống hoạt động
           sudo cp -a /bin chroot_dir/bin
           sudo cp -a /sbin chroot_dir/sbin
+          sudo cp -a /usr chroot_dir/usr
           sudo cp -a /lib chroot_dir/lib
           sudo cp -a /lib64 chroot_dir/lib64
           sudo cp -a /etc chroot_dir/etc
+          sudo cp -a /home chroot_dir/home
 
-          # Khởi tạo các thư mục hệ thống trống bắt buộc
-          sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/dev chroot_dir/run chroot_dir/tmp chroot_dir/boot chroot_dir/home
+          sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/dev chroot_dir/run chroot_dir/tmp chroot_dir/boot
           sudo chmod 1777 chroot_dir/tmp
+
+      - name: Tweak Installer for Post-Install USB Eject Prompt
+        run: |
+          # CẤU HÌNH RÚT USB: Chỉnh sửa tập lệnh hệ thống của casper bên trong đĩa cài đặt
+          # Thao tác này ép buộc hệ thống khi nhận tín hiệu reboot từ Calamares phải kích hoạt lệnh dừng ổ đĩa, 
+          # đẩy khay đĩa/ngắt điện USB và in dòng chữ yêu cầu người dùng rút USB rồi nhấn Enter.
+          sudo sed -i 's/prompt=.*/prompt=true/g' chroot_dir/etc/casper.conf || true
+          sudo mkdir -p chroot_dir/etc/calamares/modules
+          
+          # Thiết lập cấu hình module hoàn tất của trình cài đặt đồ họa
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/calamares/modules/finished.conf
+          ---
+          restartNowMode: "user-checked"
+          restartNowCommand: "systemctl reboot"
+          EOF
+
+      - name: Create Custom Boot Splash Screen
+        run: |
+          # 1. Khởi tạo thư mục chứa chủ đề hoạt ảnh khởi động (Boot Splash Screen) sử dụng công cụ Plymouth mặc định
+          sudo mkdir -p chroot_dir/usr/share/plymouth/themes/duykhanhos
+          
+          # 2. Tạo tập lệnh vẽ màn hình khởi động đen sâu, chính giữa hiện chữ DuyKhanhOS nổi bật màu đỏ RedStar
+          sudo cat <<'EOF' | sudo tee chroot_dir/usr/share/plymouth/themes/duykhanhos/duykhanhos.script
+          Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
+          Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
+          
+          logo.image = Image("logo.png");
+          logo.sprite = Sprite(logo.image);
+          logo.x = Window.GetX() + Window.GetWidth() / 2 - logo.image.GetWidth() / 2;
+          logo.y = Window.GetY() + Window.GetHeight() / 2 - logo.image.GetHeight() / 2;
+          logo.sprite.SetPosition(logo.x, logo.y, 1000);
+          EOF
+
+          # 3. Đóng gói tệp tin cấu hình định tuyến cho Splash đồ họa
+          sudo cat <<'EOF' | sudo tee chroot_dir/usr/share/plymouth/themes/duykhanhos/duykhanhos.plymouth
+          [Plymouth Theme]
+          Name=DuyKhanhOS Boot Splash
+          Description=A clean custom boot splash for DuyKhanhOS
+          ModuleName=script
+          
+          [script]
+          ImageDir=/usr/share/plymouth/themes/duykhanhos
+          ScriptFile=/usr/share/plymouth/themes/duykhanhos/duykhanhos.script
+          EOF
+
+          # 4. Tự sinh file ảnh text thô làm Logo đại diện thay thế (Nếu bạn có file ảnh thật png riêng trong repo, hãy cp vào đây)
+          echo "DuyKhanhOS" > chroot_dir/usr/share/plymouth/themes/duykhanhos/logo.png
+
+          # 5. Ép nhân đồ họa của hệ thống nhận diện DuyKhanhOS làm hoạt ảnh khởi động mặc định vĩnh viễn
+          sudo chroot chroot_dir plymouth-set-default-theme duykhanhos || true
+
+      - name: Configure Auto-Login and User Account
+        run: |
+          sudo mkdir -p chroot_dir/etc/lightdm/lightdm.conf.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/lightdm/lightdm.conf.d/autologin.conf
+          [Seat:*]
+          autologin-user=duykhanh
+          autologin-user-timeout=0
+          user-session=xfce
+          EOF
+
+          sudo useradd -R chroot_dir -m -s /bin/bash -g sudo duykhanh || true
+          sudo chroot chroot_dir passwd -d duykhanh || true
+
+          sudo mkdir -p chroot_dir/etc/sudoers.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/sudoers.d/g_sudo
+          %sudo   ALL=(ALL:ALL) NOPASSWD: ALL
+          EOF
+          sudo chmod 0440 chroot_dir/etc/sudoers.d/g_sudo
+
+      - name: Setup System AutoStart Configuration
+        run: |
+          sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
+          
+          sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/plank.desktop
+          [Desktop Entry]
+          Type=Application
+          Exec=plank
+          Name=Plank Dock
+          X-GNOME-Autostart-enabled=true
+          EOF
+
+          sudo chown -R 1000:1000 chroot_dir/home/duykhanh
 
       - name: Compress System Core into SquashFS
         run: |
-          # Nén đa luồng hệ thống cốt lõi siêu tốc chỉ trong 30 giây vì dung lượng siêu nhẹ
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          # Trích xuất nhân boot Linux nguyên bản đang chạy ổn định của máy chủ vào phân vùng đĩa ISO
-          sudo cp /boot/vmlinuz-$(uname -r) image/live/vmlinuz
-          sudo cp /boot/initrd.img-$(uname -r) image/live/initrd.img
+          sudo cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
+          sudo cp chroot_dir/boot/initrd* image/live/initrd.img
           
           mkdir -p image/boot/grub
           cat <<'EOF' > image/boot/grub/grub.cfg
-          set timeout=5
+          set timeout=10
           set default=0
           
-          menuentry "Boot DuyKhanhOS Live Suite" {
-              linux /live/vmlinuz boot=casper quiet splash
+          menuentry "1. Try DuyKhanhOS Live CD (Graphic Mode)" {
+              linux /live/vmlinuz boot=casper quiet splash splash=plymouth theme=duykhanhos
+              initrd /live/initrd.img
+          }
+          menuentry "2. Install DuyKhanhOS directly to Storage (Bootable Installer)" {
+              linux /live/vmlinuz boot=casper toram calamares quiet splash splash=plymouth theme=duykhanhos
               initrd /live/initrd.img
           }
           EOF
 
       - name: Generate Production Bootable ISO
         run: |
-          # Đúc file đĩa ISO thành phẩm hoàn chỉnh 
           grub-mkrescue -o duykhanhos-production.iso image
 
       - name: Upload Finished System ISO

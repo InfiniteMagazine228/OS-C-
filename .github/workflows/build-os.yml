@@ -36,24 +36,29 @@ jobs:
 
       - name: Structure Live ISO System Files
         run: |
-          # Khởi tạo thư mục gốc mới tinh
-          sudo rm -rf chroot_dir
+          # 1. PHÁ VỠ VÒNG LẶP VÔ HẠN: Gỡ cài đặt tất cả các phân vùng ảo bị kẹt ngầm từ commit cũ nếu có
+          sudo umount -l chroot_dir/dev || true
+          sudo umount -l chroot_dir/proc || true
+          sudo umount -l chroot_dir/sys || true
+          
+          # 2. Xóa sạch triệt để thư mục chứa bộ nhớ đệm rác cũ
+          sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           mkdir -p image/live
           
-          # TỐI ƯU TỐC ĐỘ 100%: Chỉ sao chép các thư mục chạy ứng dụng cốt lõi, bỏ qua toàn bộ file rác hệ thống của GitHub
-          # Lệnh này sẽ giúp bước này chạy xong chỉ trong vòng 30 giây thay vì bị treo vài chục phút
-          for dir in bin sbin usr lib lib64 etc home var; do
-            if [ -d /$dir ]; then
-              sudo rsync -a /$dir/ chroot_dir/$dir/
-            fi
-          done
+          # 3. SỬA LỖI TREO ĐĨA: Sử dụng lệnh cp -a thủ công cho từng thư mục ứng dụng riêng biệt
+          # Cách này bẻ gãy hoàn toàn lỗi Recursive Symlink (Lặp vô hạn) bám trên ổ cứng của GitHub Runner
+          sudo cp -a /bin chroot_dir/bin
+          sudo cp -a /sbin chroot_dir/sbin
+          sudo cp -a /usr chroot_dir/usr
+          sudo cp -a /lib chroot_dir/lib
+          sudo cp -a /lib64 chroot_dir/lib64
+          sudo cp -a /etc chroot_dir/etc
+          sudo cp -a /home chroot_dir/home
+          sudo mkdir -p chroot_dir/var/lib/apt chroot_dir/var/cache/apt
+          sudo cp -a /var/lib/dpkg chroot_dir/var/lib/dpkg
 
-          # Xóa sạch bộ nhớ đệm APT rác để thu nhỏ file ISO tối đa
-          sudo rm -rf chroot_dir/var/cache/apt/archives/*
-          sudo rm -rf chroot_dir/var/lib/apt/lists/*
-
-          # Tạo lại các thư mục ảo bắt buộc cho nhân Linux khởi động
+          # 4. Tạo lại các thư mục hệ thống trống để nhân Linux khởi động không bị sập
           sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/dev chroot_dir/run chroot_dir/tmp chroot_dir/boot
           sudo chmod 1777 chroot_dir/tmp
 

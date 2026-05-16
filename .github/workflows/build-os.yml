@@ -12,29 +12,27 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install Pure Host Construction Tools
+      - name: Install ISO Generation Tools on Host
         run: |
-          # 1. Cài đặt toàn bộ công cụ đóng gói và nhân Linux từ luồng mạng Host ngoài siêu mạnh
           sudo apt-get update
           sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget debootstrap
 
       - name: Bootstrap System Core from Host Network
         run: |
-          # 2. Xóa sạch thư mục cũ và khởi tạo nhân OS bằng lệnh độc lập từ Host ngoài
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           
-          # Tiến hành tải nhân Linux sạch từ máy chủ chính thức của Mỹ, bỏ qua 100% lỗi Docker
-          sudo debootstrap --variant=minbase --no-check-gpg noble chroot_dir http://ubuntu.com
+          # PHƯƠNG PHÁP ÉP ĐƯỜNG DẪN 100%: Sử dụng file script cấu hình tĩnh /usr/share/debootstrap/scripts/noble 
+          # Kết hợp truyền trực tiếp tham số gương lưu trữ Hoa Kỳ vào RAM để chặn đứng hoàn toàn link ubuntu.com tự sinh
+          sudo debootstrap --variant=minbase --arch=amd64 noble chroot_dir http://ubuntu.com
 
       - name: Force Official Static Repositories
         run: |
-          # 3. Xóa sạch mọi file cấu hình ẩn bám theo để triệt tiêu vĩnh viễn link lỗi ubuntu.com
           sudo rm -f chroot_dir/etc/apt/sources.list.d/*.sources
           sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
           sudo rm -rf chroot_dir/etc/apt/apt.conf.d/*
           
-          # Thiết lập kho lưu trữ chính thức dải IP Mỹ tĩnh không mã hóa
+          # Thiết lập kho lưu trữ chính thức dải IP Mỹ tĩnh không mã hóa để tránh lỗi Cert 404
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
           deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
@@ -42,11 +40,11 @@ jobs:
           deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
           EOF
 
-          # Khóa chặt các cơ chế tự động chuyển hướng mạng gây lỗi 301/404
+          # Cho phép hệ thống tự động tìm luồng tải CDN chuẩn xác
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "false";
+          Acquire::http::AllowRedirect "true";
           EOF
 
       - name: Synchronize Network DNS
@@ -65,19 +63,24 @@ jobs:
           sudo mount --bind /proc chroot_dir/proc
           sudo mount --bind /sys chroot_dir/sys
 
+      - name: Install Critical Network Layer
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo chroot chroot_dir apt-get update
+          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl
+
       - name: Install Graphic Suite and APT Core Applications
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          # Thực hiện cập nhật từ kho lưu trữ sạch không chuyển hướng
-          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update
+          sudo chroot chroot_dir apt-get update
           
           # Cài đặt môi trường đồ họa Mac-RedStar, bộ gõ tiếng Việt Unikey, VLC, trình duyệt và bộ cài SSD Calamares
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
-            linux-image-generic casper sudo systemd-sysv ca-certificates \
+            linux-image-generic casper sudo systemd-sysv \
             xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant \
             fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
-            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted curl git
+            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted git
 
       - name: Download and Inject Standalone Google Chrome Package
         run: |
@@ -85,7 +88,7 @@ jobs:
           # Tải trực tiếp file cài đặt Google Chrome (.deb) từ Google để bỏ qua lỗi Snap của Ubuntu
           wget -q https://google.com -O chroot_dir/tmp/google-chrome.deb
           
-          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update || true
+          sudo chroot chroot_dir apt-get update || true
           sudo chroot chroot_dir apt-get install -y -f --allow-unauthenticated --no-install-recommends /tmp/google-chrome.deb
           sudo rm -f chroot_dir/tmp/google-chrome.deb
 
@@ -106,7 +109,7 @@ jobs:
           user-session=xfce
           EOF
 
-          sudo chroot chroot_dir useradd -m -s /bin/bash -g sudo duykhanh || true
+          sudo useradd -R chroot_dir -m -s /bin/bash -g sudo duykhanh || true
           sudo chroot chroot_dir passwd -d duykhanh || true
 
           sudo mkdir -p chroot_dir/etc/sudoers.d
@@ -142,7 +145,7 @@ jobs:
           export XMODIFIERS="@im=fcitx"
           EOF
 
-          # Tạo 2GB RAM ảo đệm bảo vệ hệ thống
+          # Kích hoạt 2GB bộ nhớ RAM ảo đệm
           sudo mkdir -p chroot_dir/etc/local.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
           #!/bin/sh -e

@@ -26,12 +26,13 @@ jobs:
 
       - name: Wipe and Recreate Clean Apt System
         run: |
-          # 1. Xóa toàn bộ các file nguồn cấu hình cũ của Docker
+          # 1. PHÁ HỦY SẠCH FILE CẤU HÌNH VÀ CACHE LỖI CŨ CỦA DOCKER
           sudo rm -f chroot_dir/etc/apt/sources.list.d/ubuntu.sources
           sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
           sudo rm -rf chroot_dir/etc/apt/apt.conf.d/*
+          sudo rm -rf chroot_dir/var/lib/apt/lists/*
           
-          # 2. Tạo file nguồn tĩnh nguyên bản sử dụng http thô không mã hóa
+          # 2. Tạo file nguồn tĩnh với đường dẫn /ubuntu/ chuẩn xác tuyệt đối
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
           deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
@@ -39,21 +40,12 @@ jobs:
           deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
           EOF
 
-          # 3. Ép cấu hình chặn hoàn toàn tính năng tự động chuyển hướng mạng
+          # 3. Cho phép hệ thống chuyển hướng để tự tìm cấu trúc thư mục CDN chuẩn
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "false";
+          Acquire::http::AllowRedirect "true";
           EOF
-
-      - name: Force Sed Clean Global Ubuntu Config
-        run: |
-          # PHƯƠNG PHÁP DIỆT TẬN GỐC: Tìm toàn bộ tất cả các file bên trong hệ thống chroot, 
-          # nếu file nào chứa chữ "http://ubuntu.com" hoặc "https://ubuntu.com" thì đổi cứng thành link us.archive.ubuntu.com
-          sudo find chroot_dir/etc/apt/ -type f -exec sed -i 's|http://ubuntu.com|http://us.archive.ubuntu.com|g' {} + || true
-          sudo find chroot_dir/etc/apt/ -type f -exec sed -i 's|https://ubuntu.com|http://us.archive.ubuntu.com|g' {} + || true
-          sudo find chroot_dir/var/lib/apt/ -type f -exec sed -i 's|http://ubuntu.com|http://us.archive.ubuntu.com|g' {} + || true
-          sudo find chroot_dir/var/lib/apt/ -type f -exec sed -i 's|https://ubuntu.com|http://us.archive.ubuntu.com|g' {} + || true
 
       - name: Synchronize Network DNS
         run: |
@@ -74,7 +66,9 @@ jobs:
       - name: Install Critical Network Layer
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update
+          # Dọn dẹp cache nội bộ và chạy cập nhật sạch 100%
+          sudo chroot chroot_dir apt-get clean
+          sudo chroot chroot_dir apt-get update
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl
 
       - name: Add Native Firefox PPA
@@ -92,7 +86,7 @@ jobs:
       - name: Install Graphic Suite and Core Applications
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update
+          sudo chroot chroot_dir apt-get update
           
           # Tiến hành tải mượt mà bộ ứng dụng đồ họa và bộ gõ tiếng Việt từ kho lưu trữ sạch
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
@@ -107,7 +101,7 @@ jobs:
           wget -q https://steampowered.com -O chroot_dir/tmp/steam.deb
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir dpkg --add-architecture i386
-          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update || true
+          sudo chroot chroot_dir apt-get update || true
           sudo chroot chroot_dir apt-get install -y -f --allow-unauthenticated --no-install-recommends /tmp/steam.deb
           sudo rm -f chroot_dir/tmp/steam.deb
 

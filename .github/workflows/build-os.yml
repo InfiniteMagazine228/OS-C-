@@ -28,21 +28,28 @@ jobs:
 
       - name: Force Static Debian Package Repositories
         run: |
-          sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
-          sudo rm -f chroot_dir/etc/apt/sources.list
+          # DIỆT TẬN GỐC CONFIG CŨ: Xóa sạch toàn bộ cấu hình mặc định của Docker để tránh tự nắn dòng mạng hỏng
+          sudo rm -rf chroot_dir/etc/apt
           
+          # Dựng lại cấu trúc quản lý gói mới tinh sạch 100%
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
+          sudo mkdir -p chroot_dir/etc/apt/preferences.d
+          sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
+          sudo rm -rf chroot_dir/var/lib/apt/lists/*
+          
+          # Ghi đè cứng kho lưu trữ thô nguyên bản của Mỹ kèm đường dẫn /debian/ chuẩn xác tuyệt đối
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb http://debian.org bookworm main contrib non-free non-free-firmware
-          deb http://debian.org bookworm-updates main contrib non-free non-free-firmware
-          deb http://debian.org bookworm-security main contrib non-free non-free-firmware
+          deb [trusted=yes] http://debian.org bookworm main contrib non-free non-free-firmware
+          deb [trusted=yes] http://debian.org bookworm-updates main contrib non-free non-free-firmware
+          deb [trusted=yes] http://debian.org bookworm-security main contrib non-free non-free-firmware
           EOF
 
+          # BẬT ALLOWREDIRECT=TRUE: Cho phép hệ thống chuyển hướng tự do để CDN tự tìm luồng mạng chuẩn
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
           Acquire::ForceIPv4 "true";
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "false";
+          Acquire::http::AllowRedirect "true";
           EOF
 
       - name: Synchronize Network DNS
@@ -64,6 +71,7 @@ jobs:
       - name: Install Critical Network Layer
         run: |
           export DEBIAN_FRONTEND=noninteractive
+          sudo chroot chroot_dir apt-get clean
           sudo chroot chroot_dir apt-get update
           sudo chroot chroot_dir apt-get install -y --no-install-recommends ca-certificates apt-transport-https gnupg curl live-boot
 
@@ -72,8 +80,7 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir apt-get update
           
-          # SỬA LỖI 100: Loại bỏ gói lỗi calamares-settings-debian
-          # Thêm firmware-linux nhận diện tốt chuột và bàn phím máy ảo
+          # Cài đặt toàn bộ môi trường đồ họa, VLC và trình cài đặt SSD
           sudo chroot chroot_dir apt-get install -y --no-install-recommends \
             linux-image-amd64 sudo systemd-sysv firmware-linux \
             xorg xfce4 xfce4-goodies lightdm plank \

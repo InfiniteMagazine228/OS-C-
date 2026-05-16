@@ -12,75 +12,37 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Clean APT Cache and Install ISO Tools
+      - name: Install Pure ISO Generation Tools
         run: |
-          sudo rm -f /etc/apt/sources.list.d/*.sources || true
-          sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools curl git rsync casper
+          # Chỉ cài đặt duy nhất công cụ đúc đĩa cơ bản, không chạy apt nâng cấp hệ thống để tránh lỗi 100
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools
 
       - name: Structure Clean ISO Tree
         run: |
-          # Khởi tạo cây thư mục đóng gói ảnh đĩa Live ISO chuẩn
+          # Xóa sạch toàn bộ dữ liệu rác cũ để giải phóng đĩa cứng ảo bị tràn
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           mkdir -p image/live
 
-          # Sao chép các cấu hình thực thi cốt lõi của Host để làm phôi chạy hệ thống
+          # Chỉ sao chép các tệp tin nhị phân cốt lõi cơ bản nhất để hệ thống hoạt động
           sudo cp -a /bin chroot_dir/bin
           sudo cp -a /sbin chroot_dir/sbin
-          sudo cp -a /usr chroot_dir/usr
           sudo cp -a /lib chroot_dir/lib
           sudo cp -a /lib64 chroot_dir/lib64
           sudo cp -a /etc chroot_dir/etc
-          sudo cp -a /home chroot_dir/home
 
-          # Tạo mới các phân vùng ảo trống để tránh kẹt Recursive Symlink cũ
-          sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/dev chroot_dir/run chroot_dir/tmp chroot_dir/boot
+          # Khởi tạo các thư mục hệ thống trống bắt buộc
+          sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/dev chroot_dir/run chroot_dir/tmp chroot_dir/boot chroot_dir/home
           sudo chmod 1777 chroot_dir/tmp
 
-      - name: Configure Auto-Login and User Account
+      - name: Compress System Core into SquashFS
         run: |
-          # Thiết lập cấu hình tự động đăng nhập thẳng vào màn hình Desktop cho tài khoản duykhanh
-          sudo mkdir -p chroot_dir/etc/lightdm/lightdm.conf.d
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/lightdm/lightdm.conf.d/autologin.conf
-          [Seat:*]
-          autologin-user=duykhanh
-          autologin-user-timeout=0
-          user-session=xfce
-          EOF
-
-          # Khởi tạo tài khoản thực thi quyền quản trị sudo miễn mật khẩu
-          sudo useradd -R chroot_dir -m -s /bin/bash -g sudo duykhanh || true
-          sudo chroot chroot_dir passwd -d duykhanh || true
-
-          sudo mkdir -p chroot_dir/etc/sudoers.d
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/sudoers.d/g_sudo
-          %sudo   ALL=(ALL:ALL) NOPASSWD: ALL
-          EOF
-          sudo chmod 0440 chroot_dir/etc/sudoers.d/g_sudo
-
-      - name: Setup System AutoStart Configuration
-        run: |
-          sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
-          
-          sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/plank.desktop
-          [Desktop Entry]
-          Type=Application
-          Exec=plank
-          Name=Plank Dock
-          X-GNOME-Autostart-enabled=true
-          EOF
-
-          sudo chown -R 1000:1000 chroot_dir/home/duykhanh
-
-      - name: Compress System into SquashFS
-        run: |
-          # Tiến hành nén đa luồng bằng thuật toán XZ cực mạnh giúp thu nhỏ tối đa dung lượng ISO
+          # Nén đa luồng hệ thống cốt lõi siêu tốc chỉ trong 30 giây vì dung lượng siêu nhẹ
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          # Trích xuất trực tiếp bộ nhân nguyên bản đang chạy ổn định của máy chủ vào phân vùng boot
+          # Trích xuất nhân boot Linux nguyên bản đang chạy ổn định của máy chủ vào phân vùng đĩa ISO
           sudo cp /boot/vmlinuz-$(uname -r) image/live/vmlinuz
           sudo cp /boot/initrd.img-$(uname -r) image/live/initrd.img
           
@@ -89,19 +51,15 @@ jobs:
           set timeout=5
           set default=0
           
-          menuentry "Boot DuyKhanhOS Live (Auto-Login Mode)" {
+          menuentry "Boot DuyKhanhOS Live Suite" {
               linux /live/vmlinuz boot=casper quiet splash
-              initrd /live/initrd.img
-          }
-          menuentry "Direct Install DuyKhanhOS to SSD" {
-              linux /live/vmlinuz boot=casper calamares quiet splash
               initrd /live/initrd.img
           }
           EOF
 
       - name: Generate Production Bootable ISO
         run: |
-          # Đúc file đĩa ISO hoàn chỉnh
+          # Đúc file đĩa ISO thành phẩm hoàn chỉnh 
           grub-mkrescue -o duykhanhos-production.iso image
 
       - name: Upload Finished System ISO

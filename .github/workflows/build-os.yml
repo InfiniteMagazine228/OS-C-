@@ -12,44 +12,58 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install Pure ISO Generation Tools
+      - name: Install ISO Generation Tools on Host
         run: |
           sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools rsync casper plymouth plymouth-themes
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget debootstrap
 
-      - name: Install Graphic Suite and NetworkManager on Host
+      - name: Bootstrap Pure System Core via Network
         run: |
-          export DEBIAN_FRONTEND=noninteractive
-          sudo apt-get install -y --no-install-recommends \
-            xorg xfce4 xfce4-goodies lightdm plank \
-            network-manager network-manager-gnome wpasupplicant firefox calamares
-
-      - name: Structure Clean ISO Tree
-        run: |
+          # BẺ GÃY VÒNG LẶP VÔ HẠN: Ép buộc gỡ cài đặt tất cả phân vùng ảo bị kẹt ngầm từ commit cũ để mở khóa đĩa cứng
+          sudo umount -l chroot_dir/dev || true
+          sudo umount -l chroot_dir/proc || true
+          sudo umount -l chroot_dir/sys || true
+          
+          # Xóa sạch bộ nhớ rác cũ siêu tốc mà không bị đóng băng
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           mkdir -p image/live
+          
+          sudo debootstrap --variant=minbase noble chroot_dir http://ubuntu.com
 
-          sudo cp -a /bin chroot_dir/bin
-          sudo cp -a /sbin chroot_dir/sbin
-          sudo cp -a /usr chroot_dir/usr
-          sudo cp -a /lib chroot_dir/lib
-          sudo cp -a /lib64 chroot_dir/lib64
-          sudo cp -a /etc chroot_dir/etc
-          sudo cp -a /home chroot_dir/home
+      - name: Configure Clean Package Repositories
+        run: |
+          sudo rm -f chroot_dir/etc/apt/sources.list.d/*.sources
+          sudo mkdir -p chroot_dir/etc/apt/sources.list.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
+          deb http://ubuntu.com noble main restricted universe multiverse
+          deb http://ubuntu.com noble-updates main restricted universe multiverse
+          deb http://ubuntu.com noble-security main restricted universe multiverse
+          EOF
 
-          sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/dev chroot_dir/run chroot_dir/tmp chroot_dir/boot
-          sudo chmod 1777 chroot_dir/tmp
+      - name: Synchronize Network DNS and Mount System
+        run: |
+          sudo cp /etc/resolv.conf chroot_dir/etc/resolv.conf
+          sudo mount --bind /dev chroot_dir/dev
+          sudo mount --bind /proc chroot_dir/proc
+          sudo mount --bind /sys chroot_dir/sys
+
+      - name: Install Graphic Suite and Core Applications
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo chroot chroot_dir apt-get update
+          
+          sudo chroot chroot_dir apt-get install -y --no-install-recommends \
+            linux-image-generic casper sudo systemd-sysv ca-certificates plymouth plymouth-themes \
+            xorg xfce4 xfce4-goodies lightdm plank \
+            network-manager network-manager-gnome wpasupplicant firefox \
+            fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
+            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted curl git
 
       - name: Tweak Installer for Post-Install USB Eject Prompt
         run: |
-          # CẤU HÌNH RÚT USB: Chỉnh sửa tập lệnh hệ thống của casper bên trong đĩa cài đặt
-          # Thao tác này ép buộc hệ thống khi nhận tín hiệu reboot từ Calamares phải kích hoạt lệnh dừng ổ đĩa, 
-          # đẩy khay đĩa/ngắt điện USB và in dòng chữ yêu cầu người dùng rút USB rồi nhấn Enter.
           sudo sed -i 's/prompt=.*/prompt=true/g' chroot_dir/etc/casper.conf || true
           sudo mkdir -p chroot_dir/etc/calamares/modules
-          
-          # Thiết lập cấu hình module hoàn tất của trình cài đặt đồ họa
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/calamares/modules/finished.conf
           ---
           restartNowMode: "user-checked"
@@ -58,14 +72,10 @@ jobs:
 
       - name: Create Custom Boot Splash Screen
         run: |
-          # 1. Khởi tạo thư mục chứa chủ đề hoạt ảnh khởi động (Boot Splash Screen) sử dụng công cụ Plymouth mặc định
           sudo mkdir -p chroot_dir/usr/share/plymouth/themes/duykhanhos
-          
-          # 2. Tạo tập lệnh vẽ màn hình khởi động đen sâu, chính giữa hiện chữ DuyKhanhOS nổi bật màu đỏ RedStar
           sudo cat <<'EOF' | sudo tee chroot_dir/usr/share/plymouth/themes/duykhanhos/duykhanhos.script
           Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
           Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
-          
           logo.image = Image("logo.png");
           logo.sprite = Sprite(logo.image);
           logo.x = Window.GetX() + Window.GetWidth() / 2 - logo.image.GetWidth() / 2;
@@ -73,23 +83,25 @@ jobs:
           logo.sprite.SetPosition(logo.x, logo.y, 1000);
           EOF
 
-          # 3. Đóng gói tệp tin cấu hình định tuyến cho Splash đồ họa
           sudo cat <<'EOF' | sudo tee chroot_dir/usr/share/plymouth/themes/duykhanhos/duykhanhos.plymouth
           [Plymouth Theme]
           Name=DuyKhanhOS Boot Splash
           Description=A clean custom boot splash for DuyKhanhOS
           ModuleName=script
-          
           [script]
           ImageDir=/usr/share/plymouth/themes/duykhanhos
           ScriptFile=/usr/share/plymouth/themes/duykhanhos/duykhanhos.script
           EOF
 
-          # 4. Tự sinh file ảnh text thô làm Logo đại diện thay thế (Nếu bạn có file ảnh thật png riêng trong repo, hãy cp vào đây)
           echo "DuyKhanhOS" > chroot_dir/usr/share/plymouth/themes/duykhanhos/logo.png
-
-          # 5. Ép nhân đồ họa của hệ thống nhận diện DuyKhanhOS làm hoạt ảnh khởi động mặc định vĩnh viễn
           sudo chroot chroot_dir plymouth-set-default-theme duykhanhos || true
+
+      - name: Unmount System Filesystems
+        if: always()
+        run: |
+          sudo umount -l chroot_dir/dev || true
+          sudo umount -l chroot_dir/proc || true
+          sudo umount -l chroot_dir/sys || true
 
       - name: Configure Auto-Login and User Account
         run: |
@@ -101,7 +113,7 @@ jobs:
           user-session=xfce
           EOF
 
-          sudo useradd -R chroot_dir -m -s /bin/bash -g sudo duykhanh || true
+          sudo chroot chroot_dir useradd -m -s /bin/bash -g sudo duykhanh || true
           sudo chroot chroot_dir passwd -d duykhanh || true
 
           sudo mkdir -p chroot_dir/etc/sudoers.d
@@ -113,12 +125,19 @@ jobs:
       - name: Setup System AutoStart Configuration
         run: |
           sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
-          
           sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/plank.desktop
           [Desktop Entry]
           Type=Application
           Exec=plank
           Name=Plank Dock
+          X-GNOME-Autostart-enabled=true
+          EOF
+
+          sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/fcitx.desktop
+          [Desktop Entry]
+          Type=Application
+          Exec=fcitx -d
+          Name=Fcitx Input Method
           X-GNOME-Autostart-enabled=true
           EOF
 

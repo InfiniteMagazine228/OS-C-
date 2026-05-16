@@ -19,64 +19,91 @@ jobs:
 
       - name: Extract System Core via Safe Docker
         run: |
-          # 1. Khởi tạo và xóa sạch thư mục build cũ
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           
-          # 2. Tạo container sạch từ Docker Hub để lấy nhân OS gốc
-          # Cách này bẻ gãy 100% lỗi debootstrap tự chuyển hướng sang ubuntu.com
           docker create --name duykhanh_core ubuntu:noble
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
-      - name: Synchronize Network DNS and Force Clean Repos
+      - name: Wipe and Recreate Pure Apt System
         run: |
-          # 3. Xóa sạch file cấu hình nguồn cũ của Docker chèn link lỗi
-          sudo rm -f chroot_dir/etc/apt/sources.list.d/ubuntu.sources
-          sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
-          sudo rm -rf chroot_dir/etc/apt/apt.conf.d/*
+          # DIỆT TẬN GỐC CONFIG CŨ: Đập tan hoàn toàn thư mục apt chứa file ubuntu.sources ẩn gây lỗi
+          sudo rm -rf chroot_dir/etc/apt
           
-          # 4. Ghi đè kho lưu trữ tiêu chuẩn của Mỹ chạy qua giao thức HTTP tĩnh
+          # Dựng lại cấu trúc quản lý gói mới tinh sạch 100%
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
+          sudo mkdir -p chroot_dir/etc/apt/preferences.d
+          sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
+          sudo rm -rf chroot_dir/var/lib/apt/lists/*
+          
+          # Ghi đè cứng kho lưu trữ thô nguyên bản qua cổng HTTP tĩnh không mã hóa
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
           deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
           deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse
           deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
           EOF
 
+          # Khóa chặt tính năng tự nắn dòng chuyển hướng mạng của Canonical
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
+          Acquire::https::Verify-Peer "false";
+          Acquire::AllowInsecureRepositories "true";
+          Acquire::http::AllowRedirect "false";
+          EOF
+
+      - name: Synchronize Network DNS
+        run: |
           sudo cp /etc/resolv.conf chroot_dir/etc/resolv.conf
 
-      - name: Fix Dev Null Permission and Mount System
+      - name: Fix Dev Null, Tmp Permission and Mount System
         run: |
-          # 5. Khởi tạo lại cổng thiết bị /dev/null chuẩn cấp quyền tự do cho chroot
           sudo rm -f chroot_dir/dev/null
           sudo mknod -m 666 chroot_dir/dev/null c 1 3
+          
+          sudo mkdir -p chroot_dir/tmp
+          sudo chmod 1777 chroot_dir/tmp
           
           sudo mount --bind /dev chroot_dir/dev
           sudo mount --bind /proc chroot_dir/proc
           sudo mount --bind /sys chroot_dir/sys
 
+      - name: Install Critical Network Layer
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo chroot chroot_dir apt-get clean
+          sudo chroot chroot_dir apt-get update
+          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl
+
+      - name: Add Native Firefox PPA
+        run: |
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/mozillateam.list
+          deb [trusted=yes] http://launchpad.net noble main
+          EOF
+          
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/preferences.d/99mozillateam
+          Package: firefox*
+          Pin: release o=LP-PPA-mozillateam
+          Pin-Priority: 1001
+          EOF
+
       - name: Install Graphic Suite and Core Applications
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          
-          # Cập nhật danh sách phần mềm từ kho lưu trữ sạch
           sudo chroot chroot_dir apt-get update
           
-          # Cài đặt môi trường đồ họa Mac-RedStar, bộ gõ Unikey và trình cài đặt SSD
+          # Cài đặt môi trường đồ họa Mac-RedStar, bộ gõ Unikey và trình cài đặt SSD từ hệ thống APT sạch
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
-            linux-image-generic casper sudo systemd-sysv ca-certificates \
+            linux-image-generic casper sudo systemd-sysv \
             xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant firefox \
             fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
-            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted curl git
+            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted git
 
       - name: Install Steam 32-bit Framework
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          # 6. Thêm kiến trúc 32-bit bên trong chroot và tải Steam trực tiếp từ kho chính thức
           sudo chroot chroot_dir dpkg --add-architecture i386
-          sudo chroot chroot_dir apt-get update
+          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update || true
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends steam
 
       - name: Unmount System Filesystems
@@ -132,7 +159,7 @@ jobs:
           export XMODIFIERS="@im=fcitx"
           EOF
 
-          # Tạo 2GB RAM ảo phòng ngừa đơ máy ảo khi chạy Steam/Firefox
+          # Kích hoạt 2GB Swap ảo ngăn đơ đĩa máy ảo
           sudo mkdir -p chroot_dir/etc/local.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
           #!/bin/sh -e

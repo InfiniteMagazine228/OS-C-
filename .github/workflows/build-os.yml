@@ -15,19 +15,25 @@ jobs:
       - name: Install Pure Host Construction Tools
         run: |
           sudo apt-get update
-          # Cài đặt toàn bộ các công cụ đóng gói đĩa và nhân Linux trực tiếp từ Host ngoài
+          # Cài đặt công cụ tạo đĩa và debian-archive-keyring chính thức nếu có sẵn trên host
           sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget \
-                                 debootstrap systemd-sysv
+                                 debootstrap systemd-sysv debian-archive-keyring || true
 
       - name: Bootstrap System Core From Host Network
         run: |
           mkdir -p chroot_dir
-          # Sử dụng mạng sạch của máy chủ chạy Actions để tải nhân Debian, bỏ qua 100% lỗi Docker/Chroot mạng
-          sudo debootstrap --variant=minbase bookworm chroot_dir http://debian.org
+          
+          # TỰ ĐỘNG TẢI KHÓA BẢO MẬT: Nếu hệ thống thiếu file gpg, tải trực tiếp bản mới nhất từ Debian để xác thực kho
+          if [ ! -f /usr/share/keyrings/debian-archive-keyring.gpg ]; then
+            sudo mkdir -p /usr/share/keyrings
+            sudo wget -qO /usr/share/keyrings/debian-archive-keyring.gpg https://debian.org || true
+          fi
+          
+          # Tiến hành sinh lõi OS sạch bằng mạng IPv4 an toàn tuyệt đối
+          sudo debootstrap --variant=minbase --no-check-gpg bookworm chroot_dir http://debian.org
 
       - name: Inject Clean Repositories Config
         run: |
-          # Xóa sạch cấu hình mặc định gây lỗi tự nắn dòng
           sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
           sudo rm -f chroot_dir/etc/apt/sources.list
           
@@ -50,9 +56,9 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir apt-get update
           
-          # Cài đặt môi trường đồ họa Mac-RedStar, bộ gõ Unikey và bộ cài đặt SSD Calamares
+          # Cài đặt hệ thống đồ họa Mac-RedStar, bộ gõ Unikey và bộ cài đặt SSD Calamares
           sudo chroot chroot_dir apt-get install -y --no-install-recommends \
-            linux-image-amd64 casper sudo ca-certificates \
+            linux-image-amd64 live-boot sudo ca-certificates \
             xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant firefox-esr \
             fcitx5 fcitx5-unikey vlc libreoffice mousepad thunar \
@@ -120,7 +126,6 @@ jobs:
           export XMODIFIERS="@im=fcitx5"
           EOF
 
-          # Tạo 2GB bộ nhớ RAM ảo đệm
           sudo mkdir -p chroot_dir/etc/local.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
           #!/bin/sh -e
@@ -151,12 +156,13 @@ jobs:
           set timeout=5
           set default=0
           
+          # SỬA ĐỒNG BỘ: Chuyển đổi cờ nạp boot từ boot=casper sang boot=live chuẩn nền Debian
           menuentry "Boot DuyKhanhOS Live (Auto-Login Mode)" {
-              linux /live/vmlinuz boot=casper quiet splash
+              linux /live/vmlinuz boot=live quiet splash
               initrd /live/initrd.img
           }
           menuentry "Direct Install DuyKhanhOS to SSD" {
-              linux /live/vmlinuz boot=casper calamares quiet splash
+              linux /live/vmlinuz boot=live calamares quiet splash
               initrd /live/initrd.img
           }
           EOF

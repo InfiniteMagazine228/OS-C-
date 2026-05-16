@@ -19,7 +19,6 @@ jobs:
 
       - name: Bootstrap Pure System Core via Direct Download
         run: |
-          # 1. Giải phóng bộ nhớ rác và gỡ phân vùng ảo cũ nếu có
           if [ -d chroot_dir ]; then
             sudo umount -l chroot_dir/dev || true
             sudo umount -l chroot_dir/proc || true
@@ -29,16 +28,14 @@ jobs:
           mkdir -p chroot_dir
           mkdir -p image/live
           
-          # 2. FIX 100% LỖI DEBOOTSTRAP: Tải trực tiếp file lõi hệ thống chính thức từ server Ubuntu
-          # Giao thức tải thô này bỏ qua hoàn toàn các bước quét file Release lỗi của GitHub Actions
-          wget -q "http://ubuntu.com" -o wget_log.txt || true
+          # SỬA LỖI 100%: Chuyển sang cờ -O viết hoa để ghi dữ liệu nhị phân chuẩn file nén
+          wget -q "http://ubuntu.com" -O ubuntu-base-24.04-base-amd64.tar.gz
           
-          # Giải nén quyền tối cao vào thư mục cấu hình
+          # Tiến hành giải nén lõi hệ thống sạch vào thư mục cấu hình
           sudo tar -xzf ubuntu-base-24.04-base-amd64.tar.gz -C chroot_dir
 
       - name: Configure Clean Package Repositories
         run: |
-          # 3. Dọn sạch cấu hình mặc định của file nén và ghi đè kho tĩnh không mã hóa của Mỹ
           sudo rm -f chroot_dir/etc/apt/sources.list.d/*.sources
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
@@ -47,7 +44,6 @@ jobs:
           deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
           EOF
 
-          # Cho phép CDN tự động sửa đường dẫn điều phối thông minh
           sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf.d/99custom
           Acquire::https::Verify-Peer "false";
@@ -67,7 +63,6 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir apt-get update
           
-          # 4. Cài đặt hệ thống đồ họa Mac-RedStar, bộ gõ Unikey, Firefox, VLC và Calamares cài SSD
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv ca-certificates plymouth plymouth-themes \
             xorg xfce4 xfce4-goodies lightdm plank \
@@ -160,6 +155,7 @@ jobs:
 
       - name: Compress System Core into SquashFS
         run: |
+          mkdir -p image/live
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader

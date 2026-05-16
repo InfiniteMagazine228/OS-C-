@@ -26,26 +26,26 @@ jobs:
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
-      - name: Wipe and Recreate Pure Apt System
+      - name: Configure Official Standard DEB822 Repositories
         run: |
-          # DIỆT TẬN GỐC CONFIG CŨ: Đập tan hoàn toàn thư mục apt chứa file ubuntu.sources ẩn gây lỗi
-          sudo rm -rf chroot_dir/etc/apt
-          
-          # Dựng lại cấu trúc quản lý gói mới tinh sạch 100%
+          # 1. Xóa sạch file cấu hình nguồn cũ để tránh xung đột tên miền lỗi
+          sudo rm -f chroot_dir/etc/apt/sources.list
+          sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
-          sudo mkdir -p chroot_dir/etc/apt/preferences.d
-          sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
-          sudo rm -rf chroot_dir/var/lib/apt/lists/*
           
-          # Ghi đè cứng kho lưu trữ thô nguyên bản qua cổng HTTP tĩnh không mã hóa
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
-          deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse
-          deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
+          # 2. SỬA LỖI GỐC 100%: Ghi đè cấu trúc DEB822 chuẩn của Ubuntu 24.04 vào file ubuntu.sources
+          # Ép hệ thống dùng cổng mạng tĩnh HTTP thô không mã hóa của DigitalOcean
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/ubuntu.sources
+          Types: deb
+          URIs: http://digitalocean.com
+          Suites: noble noble-updates noble-security
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
           EOF
 
-          # Khóa chặt tính năng tự nắn dòng chuyển hướng mạng của Canonical
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
+          # 3. Tạo file cấu hình APT vô hiệu hóa hoàn toàn cơ chế tự nắn dòng HTTPS lỗi
+          sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf.d/99custom
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
           Acquire::http::AllowRedirect "false";
@@ -70,7 +70,6 @@ jobs:
       - name: Install Critical Network Layer
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get clean
           sudo chroot chroot_dir apt-get update
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl
 
@@ -80,6 +79,7 @@ jobs:
           deb [trusted=yes] http://launchpad.net noble main
           EOF
           
+          sudo mkdir -p chroot_dir/etc/apt/preferences.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/preferences.d/99mozillateam
           Package: firefox*
           Pin: release o=LP-PPA-mozillateam
@@ -91,7 +91,7 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir apt-get update
           
-          # Cài đặt môi trường đồ họa Mac-RedStar, bộ gõ Unikey và trình cài đặt SSD từ hệ thống APT sạch
+          # Cài đặt trọn bộ giao diện đồ họa Mac-RedStar, Unikey, VLC và trình cài đặt SSD Calamares
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv \
             xorg xfce4 xfce4-goodies lightdm plank \
@@ -103,7 +103,7 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir dpkg --add-architecture i386
-          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update || true
+          sudo chroot chroot_dir apt-get update || true
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends steam
 
       - name: Unmount System Filesystems
@@ -159,7 +159,7 @@ jobs:
           export XMODIFIERS="@im=fcitx"
           EOF
 
-          # Kích hoạt 2GB Swap ảo ngăn đơ đĩa máy ảo
+          # Tạo 2GB RAM ảo bảo vệ đĩa máy ảo khỏi bị đơ hình
           sudo mkdir -p chroot_dir/etc/local.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
           #!/bin/sh -e

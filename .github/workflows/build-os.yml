@@ -26,22 +26,18 @@ jobs:
 
       - name: Wipe and Recreate Clean Apt System
         run: |
-          # PHƯƠNG PHÁP TỐI HẬU: Xóa sạch toàn bộ thư mục APT cũ chứa các script ngầm tự nắn dòng lỗi
           sudo rm -rf chroot_dir/etc/apt
           
-          # Tự dựng lại cấu trúc thư mục APT sạch 100%
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           sudo mkdir -p chroot_dir/etc/apt/preferences.d
           sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
           
-          # Ghi kho lưu trữ thô nguyên bản của Mỹ bằng HTTP tĩnh không bảo mật
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb [trusted=yes] http://us.archive.ubuntu.com/ubuntu/ noble main restricted universe multiverse
-          deb [trusted=yes] http://us.archive.ubuntu.com/ubuntu/ noble-updates main restricted universe multiverse
-          deb [trusted=yes] http://us.archive.ubuntu.com/ubuntu/ noble-security main restricted universe multiverse
+          deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
+          deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse
+          deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
           EOF
 
-          # Tạo file cấu hình APT mới tinh, vô hiệu hóa hoàn toàn tính năng tự nắn dòng chuyển hướng mạng
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
@@ -52,10 +48,14 @@ jobs:
         run: |
           sudo cp /etc/resolv.conf chroot_dir/etc/resolv.conf
 
-      - name: Fix Dev Null Permission and Mount System
+      - name: Fix Dev Null, Tmp Permission and Mount System
         run: |
           sudo rm -f chroot_dir/dev/null
           sudo mknod -m 666 chroot_dir/dev/null c 1 3
+          
+          # SỬA LỖI ĐẶC QUYỀN: Cấp quyền tối cao cho thư mục ghi dữ liệu tạm thời /tmp để kích hoạt GPG
+          sudo mkdir -p chroot_dir/tmp
+          sudo chmod 1777 chroot_dir/tmp
           
           sudo mount --bind /dev chroot_dir/dev
           sudo mount --bind /proc chroot_dir/proc
@@ -69,8 +69,9 @@ jobs:
 
       - name: Add Native Firefox PPA
         run: |
+          # SỬA LỖI 403: Cập nhật chuẩn xác máy chủ lưu trữ chính thức của Mozilla Team
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/mozillateam.list
-          deb [trusted=yes] http://launchpadcontent.net noble main
+          deb [trusted=yes] http://launchpad.net noble main
           EOF
           
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/preferences.d/99mozillateam
@@ -84,7 +85,6 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir apt-get update
           
-          # Tải xuống môi trường đồ họa Mac-RedStar, Unikey, VLC, LibreOffice từ hệ thống APT sạch
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv \
             xorg xfce4 xfce4-goodies lightdm plank \
@@ -154,7 +154,6 @@ jobs:
           export XMODIFIERS="@im=fcitx"
           EOF
 
-          # Kích hoạt 2GB RAM ảo phòng ngừa đơ máy ảo khi chạy Steam/Firefox
           sudo mkdir -p chroot_dir/etc/local.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
           #!/bin/sh -e

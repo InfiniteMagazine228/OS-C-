@@ -24,21 +24,24 @@ jobs:
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
-      - name: Destroy Conflicting Apt Configuration
+      - name: Wipe and Recreate Clean Apt System
         run: |
-          sudo rm -f chroot_dir/etc/apt/sources.list.d/ubuntu.sources
-          sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
-          sudo rm -rf chroot_dir/etc/apt/apt.conf.d/*
+          # PHƯƠNG PHÁP TỐI HẬU: Xóa sạch toàn bộ thư mục APT cũ chứa các script ngầm tự nắn dòng lỗi
+          sudo rm -rf chroot_dir/etc/apt
           
-          # SỬA LỖI 100%: Sử dụng kho thô nguyên bản http://ubuntu.com bằng HTTP tĩnh tuyệt đối
+          # Tự dựng lại cấu trúc thư mục APT sạch 100%
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
+          sudo mkdir -p chroot_dir/etc/apt/preferences.d
+          sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
+          
+          # Ghi kho lưu trữ thô nguyên bản của Mỹ bằng HTTP tĩnh không bảo mật
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb [trusted=yes] http://ubuntu.com/ubuntu/ noble main restricted universe multiverse
-          deb [trusted=yes] http://ubuntu.com/ubuntu/ noble-updates main restricted universe multiverse
-          deb [trusted=yes] http://ubuntu.com/ubuntu/ noble-security main restricted universe multiverse
+          deb [trusted=yes] http://us.archive.ubuntu.com/ubuntu/ noble main restricted universe multiverse
+          deb [trusted=yes] http://us.archive.ubuntu.com/ubuntu/ noble-updates main restricted universe multiverse
+          deb [trusted=yes] http://us.archive.ubuntu.com/ubuntu/ noble-security main restricted universe multiverse
           EOF
 
-          # Khóa cứng tính năng nắn dòng (Redirect) để APT không bị các nhà mạng tự ý chuyển hướng file
+          # Tạo file cấu hình APT mới tinh, vô hiệu hóa hoàn toàn tính năng tự nắn dòng chuyển hướng mạng
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
@@ -81,7 +84,7 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir apt-get update
           
-          # Tải xuống môi trường đồ họa Mac-RedStar, Unikey, VLC, LibreOffice từ kho tĩnh
+          # Tải xuống môi trường đồ họa Mac-RedStar, Unikey, VLC, LibreOffice từ hệ thống APT sạch
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv \
             xorg xfce4 xfce4-goodies lightdm plank \
@@ -151,7 +154,7 @@ jobs:
           export XMODIFIERS="@im=fcitx"
           EOF
 
-          # TỰ ĐỘNG KÍCH HOẠT PHÂN VÙNG SWAP 2GB NGAY KHI LIVE ISO BOOT LÊN MÁY ẢO
+          # Kích hoạt 2GB RAM ảo phòng ngừa đơ máy ảo khi chạy Steam/Firefox
           sudo mkdir -p chroot_dir/etc/local.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
           #!/bin/sh -e

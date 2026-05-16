@@ -28,27 +28,39 @@ jobs:
 
       - name: Configure Official Standard DEB822 Repositories
         run: |
-          # 1. Xóa sạch file cấu hình nguồn cũ để tránh xung đột tên miền lỗi
           sudo rm -f chroot_dir/etc/apt/sources.list
           sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           
-          # 2. SỬA LỖI GỐC 100%: Ghi đè cấu trúc DEB822 chuẩn của Ubuntu 24.04 vào file ubuntu.sources
-          # Ép hệ thống dùng cổng mạng tĩnh HTTP thô không mã hóa của DigitalOcean
+          # SỬA LỖI 301: Ghi đè cấu trúc DEB822 chuẩn trỏ thẳng vào kho chính thức của Ubuntu
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/ubuntu.sources
           Types: deb
-          URIs: http://digitalocean.com
+          URIs: http://ubuntu.com
           Suites: noble noble-updates noble-security
           Components: main restricted universe multiverse
           Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
           EOF
 
-          # 3. Tạo file cấu hình APT vô hiệu hóa hoàn toàn cơ chế tự nắn dòng HTTPS lỗi
+          # Cho phép hệ thống chuyển hướng tự do (AllowRedirect true) để CDN của Ubuntu tự tìm luồng mạng mạnh nhất
           sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf.d/99custom
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "false";
+          Acquire::http::AllowRedirect "true";
+          EOF
+
+      - name: Add Native Chromium Repository (Fix ERR 7 Firefox PPA)
+        run: |
+          # GỠ BỎ FILE CŨ LỖI: Tạo kho của Linux Mint để cài Chromium DEB không dùng Snap, bỏ qua Firefox PPA bị ERR 7
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/linuxmint.list
+          deb [trusted=yes] http://linuxmint.com wilma main upstream import backport
+          EOF
+          
+          # Ép hệ thống ưu tiên gói Chromium từ Mint thay vì chặn Snap của Ubuntu
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/preferences.d/99linuxmint
+          Package: chromium
+          Pin: release o=linuxmint
+          Pin-Priority: 1001
           EOF
 
       - name: Synchronize Network DNS
@@ -73,29 +85,16 @@ jobs:
           sudo chroot chroot_dir apt-get update
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl
 
-      - name: Add Native Firefox PPA
-        run: |
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/mozillateam.list
-          deb [trusted=yes] http://launchpad.net noble main
-          EOF
-          
-          sudo mkdir -p chroot_dir/etc/apt/preferences.d
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/preferences.d/99mozillateam
-          Package: firefox*
-          Pin: release o=LP-PPA-mozillateam
-          Pin-Priority: 1001
-          EOF
-
       - name: Install Graphic Suite and Core Applications
         run: |
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir apt-get update
           
-          # Cài đặt trọn bộ giao diện đồ họa Mac-RedStar, Unikey, VLC và trình cài đặt SSD Calamares
+          # Cài đặt môi trường đồ họa Mac-RedStar, bộ gõ Unikey, VLC, LibreOffice và trình duyệt Chromium (Bản DEB thuần)
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv \
             xorg xfce4 xfce4-goodies lightdm plank \
-            network-manager network-manager-gnome wpasupplicant firefox \
+            network-manager network-manager-gnome wpasupplicant chromium \
             fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
             calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted git
 
@@ -123,7 +122,7 @@ jobs:
           user-session=xfce
           EOF
 
-          sudo chroot chroot_dir useradd -m -s /bin/bash -g sudo duykhanh || true
+          sudo useradd -R chroot_dir -m -s /bin/bash -g sudo duykhanh || true
           sudo chroot chroot_dir passwd -d duykhanh || true
 
           sudo mkdir -p chroot_dir/etc/sudoers.d
@@ -159,7 +158,7 @@ jobs:
           export XMODIFIERS="@im=fcitx"
           EOF
 
-          # Tạo 2GB RAM ảo bảo vệ đĩa máy ảo khỏi bị đơ hình
+          # Kích hoạt 2GB Swap ảo cho nhân Live ISO
           sudo mkdir -p chroot_dir/etc/local.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
           #!/bin/sh -e

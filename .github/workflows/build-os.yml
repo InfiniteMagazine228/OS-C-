@@ -32,7 +32,7 @@ jobs:
           sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           
-          # SỬA LỖI 301: Ghi đè cấu trúc DEB822 chuẩn trỏ thẳng vào kho chính thức của Ubuntu
+          # Sử dụng cấu trúc kho lưu trữ gốc của Mỹ bằng HTTP thô tĩnh
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/ubuntu.sources
           Types: deb
           URIs: http://ubuntu.com
@@ -41,26 +41,12 @@ jobs:
           Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
           EOF
 
-          # Cho phép hệ thống chuyển hướng tự do (AllowRedirect true) để CDN của Ubuntu tự tìm luồng mạng mạnh nhất
+          # Khóa chặt tính năng tự nắn dòng tự sinh lỗi 301/404 của Canonical
           sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf.d/99custom
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "true";
-          EOF
-
-      - name: Add Native Chromium Repository (Fix ERR 7 Firefox PPA)
-        run: |
-          # GỠ BỎ FILE CŨ LỖI: Tạo kho của Linux Mint để cài Chromium DEB không dùng Snap, bỏ qua Firefox PPA bị ERR 7
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/linuxmint.list
-          deb [trusted=yes] http://linuxmint.com wilma main upstream import backport
-          EOF
-          
-          # Ép hệ thống ưu tiên gói Chromium từ Mint thay vì chặn Snap của Ubuntu
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/preferences.d/99linuxmint
-          Package: chromium
-          Pin: release o=linuxmint
-          Pin-Priority: 1001
+          Acquire::http::AllowRedirect "false";
           EOF
 
       - name: Synchronize Network DNS
@@ -85,12 +71,27 @@ jobs:
           sudo chroot chroot_dir apt-get update
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl
 
+      - name: Add Safe Native Chromium Mirror
+        run: |
+          # SỬA LỖI 404 MINT: Thiết lập đường dẫn tĩnh chuẩn xác tới máy chủ chứa file .deb của Linux Mint
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/linuxmint.list
+          deb [trusted=yes] http://linuxmint.com wilma main upstream import backport
+          EOF
+          
+          sudo mkdir -p chroot_dir/etc/apt/preferences.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/preferences.d/99linuxmint
+          Package: chromium
+          Pin: release o=linuxmint
+          Pin-Priority: 1001
+          EOF
+
       - name: Install Graphic Suite and Core Applications
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get update
+          # Ép hệ thống cập nhật sạch từ 2 nguồn kho lưu trữ đã được chuẩn hóa liên kết tĩnh
+          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update
           
-          # Cài đặt môi trường đồ họa Mac-RedStar, bộ gõ Unikey, VLC, LibreOffice và trình duyệt Chromium (Bản DEB thuần)
+          # Cài đặt môi trường đồ họa Mac-RedStar, bộ gõ Unikey, VLC, LibreOffice và trình duyệt Chromium native
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv \
             xorg xfce4 xfce4-goodies lightdm plank \
@@ -102,7 +103,7 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir dpkg --add-architecture i386
-          sudo chroot chroot_dir apt-get update || true
+          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update || true
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends steam
 
       - name: Unmount System Filesystems
@@ -158,7 +159,7 @@ jobs:
           export XMODIFIERS="@im=fcitx"
           EOF
 
-          # Kích hoạt 2GB Swap ảo cho nhân Live ISO
+          # Kích hoạt 2GB Swap ảo ngăn đơ đĩa máy ảo
           sudo mkdir -p chroot_dir/etc/local.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
           #!/bin/sh -e

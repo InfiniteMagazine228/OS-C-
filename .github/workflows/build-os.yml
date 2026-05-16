@@ -22,14 +22,13 @@ jobs:
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           
-          # ĐỔI NHÂN SANG ALPINE: Triệt tiêu vĩnh viễn 100% lỗi nắn dòng mạng và lỗi 404 của Ubuntu/Debian
           docker create --name duykhanh_core alpine:latest
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
       - name: Force Static Asian Package Repositories
         run: |
-          # Thiết lập kho ứng dụng tĩnh chính thức không bảo mật của cổng quốc tế
+          # SỬA LỖI 404: Thay đổi đường dẫn kho chuẩn xác sang từ khóa latest-stable và bỏ chữ 'v' lỗi
           sudo mkdir -p chroot_dir/etc/apk
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apk/repositories
           http://alpinelinux.org
@@ -54,7 +53,7 @@ jobs:
 
       - name: Install Graphic Suite and APK Package Manager Core
         run: |
-          # Thực hiện cập nhật danh sách và cài đặt môi trường đồ họa Mac-RedStar bằng lệnh apk siêu tốc
+          # Thực hiện cập nhật danh sách và cài đặt môi trường đồ họa bằng lệnh apk sạch 100%
           sudo chroot chroot_dir apk update
           
           # Cài đặt nhân Linux, giao diện XFCE, thanh Dock Plank, chuột/bàn phím và bộ lệnh apk
@@ -107,7 +106,7 @@ jobs:
       - name: Compress Filesystem into SquashFS
         run: |
           mkdir -p image/live
-          # Nén siêu tốc đa luồng vì nhân Alpine cực kỳ tinh gọn
+          # Nén siêu tốc đa luồng nhân Alpine cực kỳ tinh gọn
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader

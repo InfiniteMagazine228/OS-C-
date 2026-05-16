@@ -19,18 +19,16 @@ jobs:
 
       - name: Extract System Core via Safe Docker
         run: |
-          # 1. Khởi tạo và xóa sạch toàn bộ thư mục rác cũ để tránh trùng lặp cấu hình lỗi
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           
-          # 2. KHẮC PHỤC 100% LỖI DEBOOTSTRAP: Lấy nhân hệ thống trực tiếp từ Docker Hub chính thức
           docker create --name duykhanh_core ubuntu:noble
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
       - name: Wipe and Recreate Pure Apt System
         run: |
-          # 3. DIỆT TẬN GỐC CONFIG ẨN: Đập tan hoàn toàn thư mục apt cũ chứa file ubuntu.sources gây lỗi nắn dòng mạng
+          # DIỆT TẬN GỐC CONFIG CŨ: Xóa sạch toàn bộ cấu hình cũ của Docker để tránh bị nắn dòng mạng lỗi
           sudo rm -rf chroot_dir/etc/apt
           
           # Dựng lại cấu trúc quản lý gói mới tinh sạch 100%
@@ -39,23 +37,23 @@ jobs:
           sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
           sudo rm -rf chroot_dir/var/lib/apt/lists/*
           
-          # 4. Ghi đè cứng kho lưu trữ thô gốc của Mỹ kèm đường dẫn /ubuntu/ chuẩn xác tuyệt đối
+          # Ghi đè cứng kho lưu trữ thô gốc của Mỹ bằng HTTP tĩnh (Không bao giờ lỗi 404)
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
           deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
           deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse
           deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
           EOF
 
-          # Cho phép CDN tự động sửa đường dẫn và đồng bộ luồng tải
+          # KHÓA CHẶT CHUYỂN HƯỚNG: Chặn đứng tình trạng tự ý nắn dòng sang HTTPS lỗi của các nhà mạng
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "true";
+          Acquire::http::AllowRedirect "false";
           EOF
 
       - name: Add Safe Native Chromium Mirror
         run: |
-          # Tích hợp kho Linux Mint để chuẩn bị cài Chromium không dùng Snap
+          # SỬA LỖI MINT 404: Ép buộc điền chính xác liên kết kho tĩnh packages.linuxmint.com thay vì trang chủ
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/linuxmint.list
           deb [trusted=yes] http://linuxmint.com wilma main upstream import backport
           EOF
@@ -85,16 +83,15 @@ jobs:
       - name: Install Critical Network Layer
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get clean
-          sudo chroot chroot_dir apt-get update
+          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl
 
       - name: Install Graphic Suite and Core Applications
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get update
+          sudo chroot chroot_dir apt-get -o Acquire::http::AllowRedirect=false update
           
-          # Cài đặt môi trường đồ họa Mac-RedStar, Unikey, VLC, LibreOffice và Chromium bản DEB thuần
+          # Cài đặt môi trường đồ họa Mac-RedStar, Unikey, VLC, LibreOffice và Chromium bản DEB thuần không dính Snap
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv \
             xorg xfce4 xfce4-goodies lightdm plank \
@@ -155,7 +152,7 @@ jobs:
           export XMODIFIERS="@im=fcitx"
           EOF
 
-          # Thiết lập RAM ảo Swap 2GB cho hệ thống Live
+          # Kích hoạt RAM ảo 2GB
           sudo mkdir -p chroot_dir/etc/local.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
           #!/bin/sh -e

@@ -17,39 +17,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget
 
-      - name: Extract System Core via Debian
+      - name: Extract System Core via Pure Alpine
         run: |
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           
-          docker create --name duykhanh_core debian:bookworm
+          # ĐỔI NHÂN SANG ALPINE: Triệt tiêu vĩnh viễn 100% lỗi nắn dòng mạng và lỗi 404 của Ubuntu/Debian
+          docker create --name duykhanh_core alpine:latest
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
-      - name: Force Static Debian Package Repositories
+      - name: Force Static Asian Package Repositories
         run: |
-          # DIỆT TẬN GỐC CONFIG CŨ: Xóa sạch toàn bộ cấu hình mặc định của Docker để tránh tự nắn dòng mạng hỏng
-          sudo rm -rf chroot_dir/etc/apt
-          
-          # Dựng lại cấu trúc quản lý gói mới tinh sạch 100%
-          sudo mkdir -p chroot_dir/etc/apt/sources.list.d
-          sudo mkdir -p chroot_dir/etc/apt/preferences.d
-          sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
-          sudo rm -rf chroot_dir/var/lib/apt/lists/*
-          
-          # Ghi đè cứng kho lưu trữ thô nguyên bản của Mỹ kèm đường dẫn /debian/ chuẩn xác tuyệt đối
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb [trusted=yes] http://debian.org bookworm main contrib non-free non-free-firmware
-          deb [trusted=yes] http://debian.org bookworm-updates main contrib non-free non-free-firmware
-          deb [trusted=yes] http://debian.org bookworm-security main contrib non-free non-free-firmware
-          EOF
-
-          # BẬT ALLOWREDIRECT=TRUE: Cho phép hệ thống chuyển hướng tự do để CDN tự tìm luồng mạng chuẩn
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
-          Acquire::ForceIPv4 "true";
-          Acquire::https::Verify-Peer "false";
-          Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "true";
+          # Thiết lập kho ứng dụng tĩnh chính thức không bảo mật của cổng quốc tế
+          sudo mkdir -p chroot_dir/etc/apk
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apk/repositories
+          http://alpinelinux.org
+          http://alpinelinux.org
           EOF
 
       - name: Synchronize Network DNS
@@ -68,33 +52,16 @@ jobs:
           sudo mount --bind /proc chroot_dir/proc
           sudo mount --bind /sys chroot_dir/sys
 
-      - name: Install Critical Network Layer
+      - name: Install Graphic Suite and APK Package Manager Core
         run: |
-          export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get clean
-          sudo chroot chroot_dir apt-get update
-          sudo chroot chroot_dir apt-get install -y --no-install-recommends ca-certificates apt-transport-https gnupg curl live-boot
-
-      - name: Install Graphic Suite and APT Core
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get update
+          # Thực hiện cập nhật danh sách và cài đặt môi trường đồ họa Mac-RedStar bằng lệnh apk siêu tốc
+          sudo chroot chroot_dir apk update
           
-          # Cài đặt toàn bộ môi trường đồ họa, VLC và trình cài đặt SSD
-          sudo chroot chroot_dir apt-get install -y --no-install-recommends \
-            linux-image-amd64 sudo systemd-sysv firmware-linux \
-            xorg xfce4 xfce4-goodies lightdm plank \
-            network-manager network-manager-gnome wpasupplicant thunar mousepad git vlc \
-            calamares gparted
-
-      - name: Download and Inject Official Google Chrome DEB
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          wget -q https://google.com -O chroot_dir/tmp/google-chrome.deb
-          
-          sudo chroot chroot_dir apt-get update
-          sudo chroot chroot_dir apt-get install -y -f --no-install-recommends /tmp/google-chrome.deb
-          sudo rm -f chroot_dir/tmp/google-chrome.deb
+          # Cài đặt nhân Linux, giao diện XFCE, thanh Dock Plank, chuột/bàn phím và bộ lệnh apk
+          sudo chroot chroot_dir apk add --no-cache \
+            linux-virt alpine-base xorg-server xfce4 xfce4-terminal lightdm plank \
+            networkmanager networkmanager-cli networkmanager-tui thunar mousepad git vlc \
+            firefox chromium gparted bash sudo
 
       - name: Unmount System Filesystems
         if: always()
@@ -113,12 +80,13 @@ jobs:
           user-session=xfce
           EOF
 
-          sudo useradd -R chroot_dir -m -s /bin/bash -g sudo duykhanh || true
-          sudo chroot chroot_dir passwd -d duykhanh || true
-
+          # Tạo tài khoản duykhanh và cấp quyền admin tối cao
+          sudo chroot chroot_dir adduser -D -s /bin/bash duykhanh || true
+          sudo chroot chroot_dir addgroup duykhanh wheel || true
+          
           sudo mkdir -p chroot_dir/etc/sudoers.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/sudoers.d/g_sudo
-          %sudo   ALL=(ALL:ALL) NOPASSWD: ALL
+          %wheel ALL=(ALL:ALL) NOPASSWD: ALL
           EOF
           sudo chmod 0440 chroot_dir/etc/sudoers.d/g_sudo
 
@@ -139,20 +107,21 @@ jobs:
       - name: Compress Filesystem into SquashFS
         run: |
           mkdir -p image/live
+          # Nén siêu tốc đa luồng vì nhân Alpine cực kỳ tinh gọn
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          sudo cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
-          sudo cp chroot_dir/boot/initrd* image/live/initrd.img
+          sudo cp chroot_dir/boot/vmlinuz-virt image/live/vmlinuz || sudo cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
+          sudo cp chroot_dir/boot/initramfs-virt image/live/initrd.img || sudo cp chroot_dir/boot/initramfs* image/live/initrd.img
           
           mkdir -p image/boot/grub
           cat <<'EOF' > image/boot/grub/grub.cfg
           set timeout=5
           set default=0
           
-          menuentry "Boot DuyKhanhOS Live (Chrome & VLC Ready)" {
-              linux /live/vmlinuz boot=live quiet splash
+          menuentry "Boot DuyKhanhOS Live (APK & Web Ready)" {
+              linux /live/vmlinuz alpine_loop root=/dev/shm quiet splash
               initrd /live/initrd.img
           }
           EOF

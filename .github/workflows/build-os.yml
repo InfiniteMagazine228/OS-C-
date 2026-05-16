@@ -15,52 +15,59 @@ jobs:
       - name: Install ISO Generation Tools on Host
         run: |
           sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools curl git rsync
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget debootstrap
 
-      - name: Configure and Install All Apps Directly on Host
+      - name: Bootstrap Core System via Host Network
+        run: |
+          # 1. Tạo thư mục chứa hệ thống nhân sạch từ kho lưu trữ chuẩn của Mỹ
+          # Bước này chạy trực tiếp từ Host ngoài nên tốc độ mạng cực nhanh và ổn định 100%
+          sudo debootstrap --variant=minbase noble chroot_dir http://ubuntu.com
+
+      - name: Force Official Package Repositories
+        run: |
+          # 2. Định nghĩa kho lưu trữ chính thức mở rộng để chuẩn bị cài các phần mềm lớn
+          sudo rm -f chroot_dir/etc/apt/sources.list.d/*.sources
+          sudo mkdir -p chroot_dir/etc/apt/sources.list.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
+          deb http://ubuntu.com noble main restricted universe multiverse
+          deb http://ubuntu.com noble-updates main restricted universe multiverse
+          deb http://ubuntu.com noble-security main restricted universe multiverse
+          EOF
+
+      - name: Synchronize Network DNS and Mount
+        run: |
+          sudo cp /etc/resolv.conf chroot_dir/etc/resolv.conf
+          sudo mount --bind /dev chroot_dir/dev
+          sudo mount --bind /proc chroot_dir/proc
+          sudo mount --bind /sys chroot_dir/sys
+
+      - name: Install Graphic Suite and Core Applications
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          # Tải toàn bộ môi trường đồ họa Mac-RedStar, bộ gõ Unikey và các phần mềm bạn yêu cầu trực tiếp lên Host ngoài
-          sudo apt-get install -y --no-install-recommends \
-            casper xorg xfce4 xfce4-goodies lightdm plank \
-            network-manager network-manager-gnome wpasupplicant \
-            vlc libreoffice mousepad thunar gparted \
-            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu
+          sudo chroot chroot_dir apt-get update
+          
+          # 3. Cài đặt môi trường đồ họa Mac-RedStar, bộ gõ Unikey, Firefox và trình cài đặt SSD
+          sudo chroot chroot_dir apt-get install -y --no-install-recommends \
+            linux-image-generic casper sudo systemd-sysv ca-certificates \
+            xorg xfce4 xfce4-goodies lightdm plank \
+            network-manager network-manager-gnome wpasupplicant firefox \
+            fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
+            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted curl git
 
-      - name: Install Steam From Official Ubuntu Multiverse
+      - name: Install Steam 32-bit Framework
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends steam
+          # 4. Thêm kiến trúc i386 trực tiếp bên trong chroot để cài đặt Steam chính chủ
+          sudo chroot chroot_dir dpkg --add-architecture i386
+          sudo chroot chroot_dir apt-get update
+          sudo chroot chroot_dir apt-get install -y --no-install-recommends steam
 
-      - name: Structure Live ISO System Files
+      - name: Unmount System Filesystems
+        if: always()
         run: |
-          # 1. PHÁ VỠ VÒNG LẶP VÔ HẠN: Gỡ cài đặt tất cả các phân vùng ảo bị kẹt ngầm từ commit cũ nếu có
           sudo umount -l chroot_dir/dev || true
           sudo umount -l chroot_dir/proc || true
           sudo umount -l chroot_dir/sys || true
-          
-          # 2. Xóa sạch triệt để thư mục chứa bộ nhớ đệm rác cũ
-          sudo rm -rf chroot_dir image duykhanhos-production.iso
-          mkdir -p chroot_dir
-          mkdir -p image/live
-          
-          # 3. SỬA LỖI TREO ĐĨA: Sử dụng lệnh cp -a thủ công cho từng thư mục ứng dụng riêng biệt
-          # Cách này bẻ gãy hoàn toàn lỗi Recursive Symlink (Lặp vô hạn) bám trên ổ cứng của GitHub Runner
-          sudo cp -a /bin chroot_dir/bin
-          sudo cp -a /sbin chroot_dir/sbin
-          sudo cp -a /usr chroot_dir/usr
-          sudo cp -a /lib chroot_dir/lib
-          sudo cp -a /lib64 chroot_dir/lib64
-          sudo cp -a /etc chroot_dir/etc
-          sudo cp -a /home chroot_dir/home
-          sudo mkdir -p chroot_dir/var/lib/apt chroot_dir/var/cache/apt
-          sudo cp -a /var/lib/dpkg chroot_dir/var/lib/dpkg
-
-          # 4. Tạo lại các thư mục hệ thống trống để nhân Linux khởi động không bị sập
-          sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/dev chroot_dir/run chroot_dir/tmp chroot_dir/boot
-          sudo chmod 1777 chroot_dir/tmp
 
       - name: Configure Auto-Login and User Account
         run: |
@@ -72,7 +79,7 @@ jobs:
           user-session=xfce
           EOF
 
-          sudo useradd -R chroot_dir -m -s /bin/bash -g sudo duykhanh || true
+          sudo chroot chroot_dir useradd -m -s /bin/bash -g sudo duykhanh || true
           sudo chroot chroot_dir passwd -d duykhanh || true
 
           sudo mkdir -p chroot_dir/etc/sudoers.d
@@ -112,14 +119,14 @@ jobs:
 
       - name: Compress System into SquashFS
         run: |
-          # Tiến hành nén đa luồng bằng thuật toán XZ cực mạnh giúp thu nhỏ tối đa dung lượng ISO
+          mkdir -p image/live
+          # Nén đa luồng bằng thuật toán XZ để tối ưu dung lượng file ISO
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          # Sao chép nhân Linux thực tế của Host vào phân vùng boot Live ISO
-          sudo cp /boot/vmlinuz-$(uname -r) image/live/vmlinuz
-          sudo cp /boot/initrd.img-$(uname -r) image/live/initrd.img
+          sudo cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
+          sudo cp chroot_dir/boot/initrd* image/live/initrd.img
           
           mkdir -p image/boot/grub
           cat <<'EOF' > image/boot/grub/grub.cfg

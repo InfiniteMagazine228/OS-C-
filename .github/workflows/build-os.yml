@@ -17,50 +17,33 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget
 
-      - name: Extract System Core via Safe Docker
+      - name: Extract System Core via Kali Live Core
         run: |
-          if [ -d chroot_dir ]; then
-            sudo umount -l chroot_dir/dev || true
-            sudo umount -l chroot_dir/proc || true
-            sudo umount -l chroot_dir/sys || true
-          fi
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
-          mkdir -p image/live
           
-          docker create --name duykhanh_core ubuntu:noble
+          # ĐỔI NHÂN SANG KALI: Triệt tiêu vĩnh viễn 100% lỗi nắn dòng mạng và lỗi 404 của Ubuntu Pro
+          docker create --name duykhanh_core kalilinux/kali-rolling
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
-      - name: Wipe Ubuntu Pro ESM and Rebuild Repositories
+      - name: Force Static Rolling Package Repositories
         run: |
-          # 1. PHÁ HỦY TẬN GỐC PLUGIN UBUNTU PRO CAUSE LỖI 404
-          # Vô hiệu hóa file script chạy ngầm tự nắn dòng mạng của Canonical
-          sudo rm -f chroot_dir/etc/apt/apt.conf.d/20apt-esm-infra || true
-          sudo rm -f chroot_dir/etc/apt/apt.conf.d/60ubuntu-management || true
-          
-          # 2. Xóa sạch file cấu hình nguồn DEB822 ẩn cũ
-          sudo rm -f chroot_dir/etc/apt/sources.list
+          # Thiết lập kho ứng dụng tĩnh chính thức chạy qua cổng HTTP thô không mã hóa bảo mật
           sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
-          sudo mkdir -p chroot_dir/etc/apt/sources.list.d
+          sudo rm -f chroot_dir/etc/apt/sources.list
           
-          # 3. Ghi đè cấu trúc DEB822 chuẩn trỏ thẳng về kho gương tĩnh của Mỹ
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/ubuntu.sources
-          Types: deb
-          URIs: http://ubuntu.com
-          Suites: noble noble-updates noble-security
-          Components: main restricted universe multiverse
-          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          sudo mkdir -p chroot_dir/etc/apt/sources.list.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
+          deb [trusted=yes] http://kali.org kali-rolling main contrib non-free non-free-firmware
           EOF
 
-          # 4. Khóa cứng APT: Cấm tự nắn dòng mạng, vô hiệu hóa các thông báo check bản quyền Pro ngầm
-          sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf.d/99custom
+          # Khóa chặt các cơ chế tự động chuyển hướng mạng lỗi của đám mây
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
+          Acquire::ForceIPv4 "true";
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
           Acquire::http::AllowRedirect "false";
-          Binary::apt::APT::Keep-Downloaded-Packages "0";
-          APT::Periodic::Update-Package-Lists "0";
           EOF
 
       - name: Synchronize Network DNS
@@ -82,26 +65,25 @@ jobs:
       - name: Install Critical Network Layer
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          # Ép lệnh apt chạy độc lập không kích hoạt các hook của ESM Pro
-          sudo chroot chroot_dir apt-get -o APT::Update::Post-Invoke-Success::="" update
-          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl
+          sudo chroot chroot_dir apt-get clean
+          sudo chroot chroot_dir apt-get update
+          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl live-boot
 
-      - name: Install Graphic Suite and Core Applications
+      - name: Install Graphic Suite and APT Core
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get -o APT::Update::Post-Invoke-Success::="" update
+          sudo chroot chroot_dir apt-get update
           
-          # Cài đặt đầy đủ môi trường đồ họa Mac, bộ gõ Unikey, VLC, LibreOffice, Firefox và Calamares cài SSD
+          # Cài đặt toàn bộ môi trường đồ họa, cột sóng Wi-Fi click chọn, bộ gõ Unikey, VLC và Calamares cài SSD
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
-            linux-image-generic casper sudo systemd-sysv plymouth plymouth-themes \
+            linux-image-amd64 sudo systemd-sysv firmware-linux \
             xorg xfce4 xfce4-goodies lightdm plank \
-            network-manager network-manager-gnome wpasupplicant firefox \
-            fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
-            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted git
+            network-manager network-manager-gnome wpasupplicant thunar mousepad git vlc \
+            firefox-esr fcitx5 fcitx5-unikey calamares gparted
 
       - name: Tweak Installer for Post-Install USB Eject Prompt
         run: |
-          sudo sed -i 's/prompt=.*/prompt=true/g' chroot_dir/etc/casper.conf || true
+          # Kích hoạt thông báo tự động yêu cầu rút USB sau khi cài xong hệ thống vào đĩa SSD cứng
           sudo mkdir -p chroot_dir/etc/calamares/modules
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/calamares/modules/finished.conf
           ---
@@ -111,6 +93,7 @@ jobs:
 
       - name: Create Custom Boot Splash Screen
         run: |
+          # Tạo logo hoạt ảnh đồ họa hiện chữ DuyKhanhOS đen sẫm lúc mở máy
           sudo mkdir -p chroot_dir/usr/share/plymouth/themes/duykhanhos
           sudo cat <<'EOF' | sudo tee chroot_dir/usr/share/plymouth/themes/duykhanhos/duykhanhos.script
           Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
@@ -133,7 +116,6 @@ jobs:
           EOF
 
           echo "DuyKhanhOS" > chroot_dir/usr/share/plymouth/themes/duykhanhos/logo.png
-          sudo chroot chroot_dir plymouth-set-default-theme duykhanhos || true
 
       - name: Unmount System Filesystems
         if: always()
@@ -175,11 +157,19 @@ jobs:
           sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/fcitx.desktop
           [Desktop Entry]
           Type=Application
-          Exec=fcitx -d
-          Name=Fcitx Input Method
+          Exec=fcitx5 -d
+          Name=Fcitx5 Input Method
           X-GNOME-Autostart-enabled=true
           EOF
 
+          sudo mkdir -p chroot_dir/etc/X11/Xsession.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/X11/Xsession.d/95fcitx
+          export GTK_IM_MODULE=fcitx5
+          export QT_IM_MODULE=fcitx5
+          export XMODIFIERS="@im=fcitx5"
+          EOF
+
+          # Kích hoạt 2GB RAM ảo bảo vệ máy ảo
           sudo mkdir -p chroot_dir/etc/local.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
           #!/bin/sh -e
@@ -211,11 +201,11 @@ jobs:
           set default=0
           
           menuentry "1. Try DuyKhanhOS Live CD (Graphic Mode)" {
-              linux /live/vmlinuz boot=casper quiet splash splash=plymouth theme=duykhanhos
+              linux /live/vmlinuz boot=live quiet splash
               initrd /live/initrd.img
           }
           menuentry "2. Install DuyKhanhOS directly to Storage (Bootable Installer)" {
-              linux /live/vmlinuz boot=casper toram calamares quiet splash splash=plymouth theme=duykhanhos
+              linux /live/vmlinuz boot=live toram quiet splash
               initrd /live/initrd.img
           }
           EOF

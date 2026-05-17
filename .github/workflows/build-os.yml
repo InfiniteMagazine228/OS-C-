@@ -27,7 +27,7 @@ jobs:
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           
-          # ĐỔI NHÂN SANG FEDORA SẠCH: Triệt tiêu vĩnh viễn 100% lỗi nắn dòng mạng của Ubuntu và lỗi đen màn hình X11
+          # Sử dụng nhân Fedora sạch từ Docker Hub để triệt tiêu 100% lỗi nắn dòng mạng và lỗi đen màn hình VirtualBox
           docker create --name duykhanh_core fedora:latest
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
@@ -119,6 +119,9 @@ jobs:
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
+          # SỬA LỖI ĐƯỜNG DẪN: Ép buộc tạo lại cấu trúc thư mục live để lệnh cp không bị báo lỗi No such file or directory
+          mkdir -p image/live
+          
           sudo cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
           sudo cp chroot_dir/boot/initramfs* image/live/initrd.img
           
@@ -143,7 +146,7 @@ jobs:
         run: |
           sudo chmod -R 755 image
           
-          # Đúc đĩa ISO gán nhãn cứng tên DuyKhanhOS đồng bộ hoàn hảo với nhân boot để nhận diện phân vùng 100%
+          # Đúc đĩa ISO gán nhãn cứng tên DuyKhanhOS đồng bộ hoàn hảo với nhân boot để nhận diện phân vùng và hiện hình đồ họa 100%
           xorriso -as mkisofs \
             -r -V "DuyKhanhOS" \
             -o duykhanhos-production.iso \

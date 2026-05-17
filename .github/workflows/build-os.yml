@@ -27,17 +27,14 @@ jobs:
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           
-          # Sử dụng nhân Fedora sạch từ Docker Hub để triệt tiêu 100% lỗi nắn dòng mạng và lỗi đen màn hình VirtualBox
           docker create --name duykhanh_core fedora:latest
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
       - name: Force Static Fedora Package Repositories
         run: |
-          # Thiết lập DNS mạng sạch cho chroot
           sudo cp /etc/resolv.conf chroot_dir/etc/resolv.conf
           
-          # Cấu hình dnf nhận diện luồng mạng IPv4 ổn định xuyên tường lửa
           sudo mkdir -p chroot_dir/etc/dnf
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/dnf/dnf.conf
           [main]
@@ -63,10 +60,8 @@ jobs:
 
       - name: Install Graphic Suite and DNF Core Applications
         run: |
-          # Thực hiện cập nhật danh sách và cài đặt môi trường đồ họa bằng lệnh dnf siêu tốc không lỗi mạng
           sudo chroot chroot_dir dnf makecache
           
-          # Cài đặt nhân Linux, môi trường đồ họa XFCE, chuột/bàn phím ảo tự động tương thích VirtualBox
           sudo chroot chroot_dir dnf install -y \
             kernel dracut grub2-common sudo systemd \
             @xfce-desktop-environment lightdm plank \
@@ -89,7 +84,6 @@ jobs:
           user-session=xfce
           EOF
 
-          # Tạo tài khoản duykhanh và cấp quyền admin tối cao miễn gõ mật khẩu
           sudo chroot chroot_dir useradd -m -s /bin/bash duykhanh || true
           
           sudo mkdir -p chroot_dir/etc/sudoers.d
@@ -119,11 +113,11 @@ jobs:
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          # SỬA LỖI ĐƯỜNG DẪN: Ép buộc tạo lại cấu trúc thư mục live để lệnh cp không bị báo lỗi No such file or directory
           mkdir -p image/live
           
-          sudo cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
-          sudo cp chroot_dir/boot/initramfs* image/live/initrd.img
+          # SỬA CÚ PHÁP TÊN NHÂN: Thêm dấu gạch ngang '-' vào trước dấu sao để rà trúng file vmlinuz-6.x của Fedora
+          sudo cp chroot_dir/boot/vmlinuz-* image/live/vmlinuz
+          sudo cp chroot_dir/boot/initramfs-* image/live/initrd.img
           
           mkdir -p image/boot/grub
           cat <<'EOF' > image/boot/grub/grub.cfg
@@ -146,7 +140,6 @@ jobs:
         run: |
           sudo chmod -R 755 image
           
-          # Đúc đĩa ISO gán nhãn cứng tên DuyKhanhOS đồng bộ hoàn hảo với nhân boot để nhận diện phân vùng và hiện hình đồ họa 100%
           xorriso -as mkisofs \
             -r -V "DuyKhanhOS" \
             -o duykhanhos-production.iso \

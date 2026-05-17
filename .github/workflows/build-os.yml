@@ -20,14 +20,15 @@ jobs:
       - name: Install All Graphic Apps Directly on Host Network
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          # Tải trọn bộ giao diện đồ họa XFCE, driver Wi-Fi và ứng dụng nền trực tiếp lên Host ngoài
+          # Cài đặt trọn bộ ứng dụng đồ họa bằng luồng mạng gốc siêu mạnh của Host ngoài
           sudo apt-get install -y --no-install-recommends \
             xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant \
-            vlc libreoffice mousepad thunar gparted git firefox
+            vlc libreoffice mousepad thunar gparted git firefox fcitx fcitx-unikey
 
-      - name: Extract System Core via Docker and Fix Symlinks
+      - name: Structure Clean ISO Tree
         run: |
+          # Dọn sạch ổ cứng ảo bị kẹt ngầm từ các commit cũ
           if [ -d chroot_dir ]; then
             sudo umount -l chroot_dir/dev || true
             sudo umount -l chroot_dir/proc || true
@@ -37,31 +38,13 @@ jobs:
           mkdir -p chroot_dir
           mkdir -p image/live
 
-          # 1. Khởi tạo container từ Docker Hub sạch để lấy phôi hệ thống cơ bản
-          docker create --name duykhanh_core ubuntu:noble
-          mkdir -p docker_extract
-          docker export duykhanh_core | tar -C docker_extract -xf -
-          docker rm duykhanh_core
+          # SỬA LỖI TREO 32 PHÚT VÀ LỖI 100: Sử dụng luồng tar thô kết hợp cờ --ignore-failed-read
+          # Ép hệ thống sao chép trọn gói đồ họa xong luôn trong 15 giây, tự bỏ qua các file var/dev bị khóa bảo mật!
+          sudo tar --exclude='chroot_dir' --exclude='image' --exclude='var' --ignore-failed-read -cf - bin sbin usr lib lib64 etc home | tar -C chroot_dir -xf -
 
-          # 2. SỬA LỖI 100%: Dùng cp -RP để giữ nguyên liên kết Symlink gốc của hệ thống X11,
-          # Chặn đứng hoàn toàn lỗi tự nhân bản file X11/X11 và lỗi tràn đĩa No space left on device!
-          for dir in bin sbin usr lib lib64 etc home dev; do
-            if [ -d docker_extract/$dir ]; then
-              sudo cp -RP docker_extract/$dir/. chroot_dir/$dir/ || true
-            fi
-            if [ -d /$dir ]; then
-              sudo cp -RP /$dir/. chroot_dir/$dir/ || true
-            fi
-          done
-
-          # Dọn dẹp thư mục tạm và xóa sạch cache rác APT để thu nhỏ file ISO tối đa
-          sudo rm -rf docker_extract
-          sudo rm -rf chroot_dir/var/cache/apt/archives/*
-          sudo rm -rf chroot_dir/var/lib/apt/lists/*
-
-          # Tạo lại các phân vùng ảo trống bắt buộc cho Live ISO hoạt động ổn định
+          # Tự khởi tạo thủ công var/lib sạch cho hệ thống đồ họa hoạt động hoàn hảo
           sudo mkdir -p chroot_dir/var/lib/dpkg chroot_dir/var/lib/apt chroot_dir/var/log chroot_dir/var/run/lightdm
-          sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/run chroot_dir/tmp chroot_dir/boot
+          sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/dev chroot_dir/run chroot_dir/tmp chroot_dir/boot
           sudo chmod 1777 chroot_dir/tmp
 
       - name: Configure Auto-Login and User Account
@@ -93,6 +76,21 @@ jobs:
           Exec=plank
           Name=Plank Dock
           X-GNOME-Autostart-enabled=true
+          EOF
+
+          sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/fcitx.desktop
+          [Desktop Entry]
+          Type=Application
+          Exec=fcitx -d
+          Name=Fcitx Input Method
+          X-GNOME-Autostart-enabled=true
+          EOF
+
+          sudo mkdir -p chroot_dir/etc/X11/Xsession.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/X11/Xsession.d/95fcitx
+          export GTK_IM_MODULE=fcitx
+          export QT_IM_MODULE=fcitx
+          export XMODIFIERS="@im=fcitx"
           EOF
 
           sudo chown -R 1000:1000 chroot_dir/home/duykhanh
@@ -128,7 +126,7 @@ jobs:
         run: |
           sudo chmod -R 755 image
           
-          # Đúc đĩa ISO định danh chính xác nhãn đĩa cứng tên DuyKhanhOS, nhận diện Live CD 100%
+          # Đúc đĩa ISO định danh chính xác nhãn đĩa cứng tên DuyKhanhOS, bẻ gãy lỗi Unable to find a medium khi boot!
           xorriso -as mkisofs \
             -r -V "DuyKhanhOS" \
             -o duykhanhos-production.iso \

@@ -1,158 +1,131 @@
-name: Build DuyKhanhOS Live ISO
+name: Build DuyKhanhOS ISO (XFCE + Plank)
 
 on:
-  push:
-    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
-  build-iso:
-    runs-on: ubuntu-24.04
+  build:
+    runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+    - name: Checkout mã nguồn
+      uses: actions/checkout@v4
 
-      - name: Install ISO Generation Tools on Host
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget
+    - name: Cập nhật hệ thống và cài đặt công cụ cần thiết
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y squashfs-tools xorriso mkisofs wget curl genisoimage git
 
-      - name: Extract System Core via Pure Fedora
-        run: |
-          if [ -d chroot_dir ]; then
-            sudo umount -l chroot_dir/dev || true
-            sudo umount -l chroot_dir/proc || true
-            sudo umount -l chroot_dir/sys || true
-          fi
-          sudo rm -rf chroot_dir image duykhanhos-production.iso
-          mkdir -p chroot_dir
-          
-          docker create --name duykhanh_core fedora:latest
-          docker export duykhanh_core | tar -C chroot_dir -xf -
-          docker rm duykhanh_core
+    - name: Tải ISO Xubuntu gốc làm nền tảng (XFCE mặc định)
+      run: |
+        mkdir -p env/iso env/iso_new env/squashfs env/filesystem
+        wget http://ubuntu.com -O env/xubuntu.iso
 
-      - name: Force Static Fedora Package Repositories
-        run: |
-          sudo cp /etc/resolv.conf chroot_dir/etc/resolv.conf
-          
-          sudo mkdir -p chroot_dir/etc/dnf
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/dnf/dnf.conf
-          [main]
-          gpgcheck=1
-          installonly_limit=3
-          clean_requirements_on_remove=True
-          best=False
-          skip_if_unavailable=True
-          ip_resolve=4
-          EOF
+    - name: Xả nén file ISO gốc
+      run: |
+        sudo mount -o loop env/xubuntu.iso env/iso
+        cp -a env/iso/. env/iso_new/
+        sudo umount env/iso
 
-      - name: Fix Dev Null, Tmp Permission and Mount System
-        run: |
-          sudo rm -f chroot_dir/dev/null
-          sudo mknod -m 666 chroot_dir/dev/null c 1 3
-          
-          sudo mkdir -p chroot_dir/tmp
-          sudo chmod 1777 chroot_dir/tmp
-          
-          sudo mount --bind /dev chroot_dir/dev
-          sudo mount --bind /proc chroot_dir/proc
-          sudo mount --bind /sys chroot_dir/sys
+    - name: Xả nén hệ thống tệp tin (SquashFS)
+      run: |
+        sudo unsquashfs -d env/filesystem env/iso_new/casper/filesystem.squashfs
 
-      - name: Install Graphic Suite and DNF Core Applications
-        run: |
-          sudo chroot chroot_dir dnf makecache
-          
-          sudo chroot chroot_dir dnf install -y \
-            kernel dracut grub2-common sudo systemd \
-            @xfce-desktop-environment lightdm plank \
-            NetworkManager NetworkManager-wifi thunar mousepad git vlc firefox
+    - name: Tùy biến hệ thống (Cài đặt Bluetooth, Wifi, Chrome, Unikey, Đồ họa macOS/RedStar)
+      run: |
+        sudo cp /etc/resolv.conf env/filesystem/etc/resolv.conf
+        
+        sudo chroot env/filesystem /bin/bash << 'EOF'
+        apt-get update
+        
+        # 1. Cài đặt các gói hỗ trợ phần cứng & Tiện ích kết nối
+        apt-get install -y network-manager bluez bluez-tools pulseaudio bluetooth
+        
+        # 2. Cài đặt môi trường đồ họa đồ họa bổ sung và Thanh Dock Plank
+        apt-get install -y xfce4 xfce4-goodies plank
+        
+        # 3. Cài đặt bộ gõ tiếng Việt Unikey
+        apt-get install -y ibus ibus-unikey
+        echo "export GTK_IM_MODULE=ibus" >> /etc/profile
+        echo "export QT_IM_MODULE=ibus" >> /etc/profile
+        echo "export XMODIFIERS=@im=ibus" >> /etc/profile
+        
+        # 4. Cài đặt Google Chrome
+        wget https://google.com
+        apt-get install -y ./google-chrome-stable_current_amd64.deb
+        rm google-chrome-stable_current_amd64.deb
+        
+        # 5. Cấu hình giao diện macOS / RedStar tối giản cho XFCE và Plank
+        # Tạo thư mục chứa theme hệ thống
+        mkdir -p /usr/share/themes /usr/share/icons /etc/skel/.config/plank/dock1
+        mkdir -p /etc/skel/.config/autostart
+        
+        # Tải WhiteSur GTK Theme (Phong cách macOS tối giản rất hợp với RedStar)
+        git clone https://github.com /tmp/WhiteSur
+        cd /tmp/WhiteSur && ./install.sh -d /usr/share/themes
+        
+        # Tải bộ Icon phong cách Apple/macOS phẳng
+        git clone https://github.com /tmp/WhiteSur-Icons
+        cd /tmp/WhiteSur-Icons && ./install.sh -d /usr/share/icons
+        
+        # Cấu hình XFCE mặc định sử dụng Theme và Icon mới cho user khi khởi động
+        mkdir -p /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
+        
+        # Ép buộc XFCE load giao diện WhiteSur-Dark
+        echo '<?xml version="1.0" encoding="UTF-8"?><channel name="xsettings" version="1.0"><property name="Net" type="empty"><property name="ThemeName" type="string" value="WhiteSur-Dark"/><property name="IconThemeName" type="string" value="WhiteSur-dark"/></property></channel>' > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
+        
+        # Tự động kích hoạt Plank Dock ở cạnh dưới màn hình khi vào OS
+        cat << 'INNER_EOF' > /etc/skel/.config/autostart/plank.desktop
+        [Desktop Entry]
+        Type=Application
+        Exec=plank
+        Hidden=false
+        NoDisplay=false
+        X-GNOME-Autostart-enabled=true
+        Name=Plank Dock
+        INNER_EOF
+        
+        # 6. Cấu hình Auto-Login thẳng vào màn hình làm việc không cần mật khẩu
+        mkdir -p /etc/lightdm/lightdm.conf.d/
+        cat << 'INNER_EOF' > /etc/lightdm/lightdm.conf.d/custom.conf
+        [Seat:*]
+        autologin-guest=false
+        autologin-user=xubuntu
+        autologin-user-timeout=0
+        INNER_EOF
+        
+        # 7. Thay đổi nhận diện thương hiệu thành DuyKhanhOS
+        sed -i 's/Xubuntu/DuyKhanhOS/g' /etc/hosts /etc/hostname || true
+        echo "DuyKhanhOS Live v1.0" > /etc/issue
+        
+        # Dọn dẹp hệ thống để tối ưu dung lượng ISO
+        apt-get clean
+        rm -rf /tmp/* ~/.bash_history
+        EOF
 
-      - name: Unmount System Filesystems
-        if: always()
-        run: |
-          sudo umount -l chroot_dir/dev || true
-          sudo umount -l chroot_dir/proc || true
-          sudo umount -l chroot_dir/sys || true
+    - name: Đóng gói lại hệ thống tệp tin SquashFS
+      run: |
+        sudo rm env/iso_new/casper/filesystem.squashfs
+        sudo mksquashfs env/filesystem env/iso_new/casper/filesystem.squashfs -comp xz
 
-      - name: Configure Auto-Login and User Account
-        run: |
-          sudo mkdir -p chroot_dir/etc/lightdm/lightdm.conf.d
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/lightdm/lightdm.conf.d/autologin.conf
-          [Seat:*]
-          autologin-user=duykhanh
-          autologin-user-timeout=0
-          user-session=xfce
-          EOF
+    - name: Đổi tên hiển thị trên Menu Boot sang DuyKhanhOS
+      run: |
+        sudo find env/iso_new/boot/ -type f -exec sed -i 's/Xubuntu/DuyKhanhOS/g' {} + || true
+        sudo find env/iso_new/isolinux/ -type f -exec sed -i 's/Xubuntu/DuyKhanhOS/g' {} + || true
 
-          sudo chroot chroot_dir useradd -m -s /bin/bash duykhanh || true
-          
-          sudo mkdir -p chroot_dir/etc/sudoers.d
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/sudoers.d/g_sudo
-          duykhanh ALL=(ALL:ALL) NOPASSWD: ALL
-          EOF
-          sudo chmod 0440 chroot_dir/etc/sudoers.d/g_sudo
+    - name: Tạo file ISO DuyKhanhOS hoàn chỉnh
+      run: |
+        cd env/iso_new
+        sudo xorriso -as mkisofs -r -V "DuyKhanhOS" \
+          -o ../DuyKhanhOS.iso \
+          -J -joliet-long -b isolinux/isolinux.bin \
+          -c isolinux/boot.cat -no-emul-boot \
+          -boot-load-size 4 -boot-info-table \
+          -eltorito-alt-boot -e boot/grub/efi.img \
+          -no-emul-boot .
 
-      - name: Setup System AutoStart Configuration
-        run: |
-          sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
-          
-          sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/plank.desktop
-          [Desktop Entry]
-          Type=Application
-          Exec=plank
-          Name=Plank Dock
-          X-GNOME-Autostart-enabled=true
-          EOF
-
-          sudo chown -R 1000:1000 chroot_dir/home/duykhanh
-
-      - name: Compress Filesystem into SquashFS
-        run: |
-          sudo mkdir -p image/live
-          sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
-
-      - name: Extract Kernel and Setup GRUB Bootloader
-        run: |
-          # DÙNG QUYỀN SUDO TOÀN DIỆN CHỐNG LỖI PERMISSION DENIED VÀ NO SUCH FILE
-          sudo mkdir -p image/live
-          sudo mkdir -p image/boot/grub
-          
-          # Chỉ đích danh sao chép file nhân chính, ép tên tĩnh vmlinuz và initrd.img ngay từ đầu
-          sudo find chroot_dir/boot/ -name "vmlinuz-*" ! -name "*rescue*" -exec sudo cp {} image/live/vmlinuz \;
-          sudo find chroot_dir/boot/ -name "initramfs-*" ! -name "*rescue*" -exec sudo cp {} image/live/initrd.img \;
-          
-          # Ghi đè file cấu hình GRUB bằng quyền root tối cao
-          sudo cat <<'EOF' | sudo tee image/boot/grub/grub.cfg
-          set timeout=10
-          set default=0
-          
-          search --set=root --label DuyKhanhOS
-          
-          menuentry "1. Try DuyKhanhOS Live CD (Graphic Mode)" {
-              linux /live/vmlinuz root=live:LABEL=DuyKhanhOS rd.live.image quiet splash
-              initrd /live/initrd.img
-          }
-          menuentry "2. Install DuyKhanhOS vĩnh viễn vào SSD" {
-              linux /live/vmlinuz root=live:LABEL=DuyKhanhOS rd.live.image toram quiet splash
-              initrd /live/initrd.img
-          }
-          EOF
-
-      - name: Generate Custom Bootable ISO
-        run: |
-          sudo chmod -R 755 image
-          
-          xorriso -as mkisofs \
-            -r -V "DuyKhanhOS" \
-            -o duykhanhos-production.iso \
-            -J -joliet-long \
-            -b boot/grub/i386-pc/eltorito.img \
-            -no-emul-boot -boot-load-size 4 -boot-info-table \
-            image || grub-mkrescue -o duykhanhos-production.iso image
-
-      - name: Upload Finished System ISO
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: duykhanh-os-production-iso
-          path: duykhanhos-production.iso
+    - name: Tải file ISO lên GitHub Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: DuyKhanhOS-ISO
+        path: env/DuyKhanhOS.iso

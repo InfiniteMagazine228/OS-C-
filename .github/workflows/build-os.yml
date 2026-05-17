@@ -1,4 +1,4 @@
-name: Build DuyKhanhOS ISO (XFCE + Plank)
+name: Build DuyKhanhOS Custom XFCE
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y squashfs-tools xorriso mkisofs wget curl genisoimage git
 
-    - name: Tải ISO Xubuntu gốc làm nền tảng (XFCE mặc định)
+    - name: Tải ISO Xubuntu gốc làm nền tảng (XFCE 64-bit)
       run: |
         mkdir -p env/iso env/iso_new env/squashfs env/filesystem
         wget http://ubuntu.com -O env/xubuntu.iso
@@ -31,50 +31,49 @@ jobs:
       run: |
         sudo unsquashfs -d env/filesystem env/iso_new/casper/filesystem.squashfs
 
-    - name: Tùy biến hệ thống (Cài đặt Bluetooth, Wifi, Chrome, Unikey, Đồ họa macOS/RedStar)
+    - name: Tùy biến hệ thống (Cài ứng dụng, Fcitx-Unikey, Mac layout)
       run: |
         sudo cp /etc/resolv.conf env/filesystem/etc/resolv.conf
         
         sudo chroot env/filesystem /bin/bash << 'EOF'
         apt-get update
         
-        # 1. Cài đặt các gói hỗ trợ phần cứng & Tiện ích kết nối
+        # 1. Cài đặt Trình quản lý mạng, Bluetooth và các ứng dụng đi kèm sẵn theo yêu cầu
         apt-get install -y network-manager bluez bluez-tools pulseaudio bluetooth
+        apt-get install -y firefox vlc libreoffice mousepad git xfce4 xfce4-goodies plank
         
-        # 2. Cài đặt môi trường đồ họa đồ họa bổ sung và Thanh Dock Plank
-        apt-get install -y xfce4 xfce4-goodies plank
+        # 2. Cài đặt và cấu hình bộ gõ tiếng Việt Fcitx + Fcitx-Unikey mặc định khởi động cùng hệ thống
+        apt-get install -y fcitx fcitx-unikey fcitx-config-gtk
         
-        # 3. Cài đặt bộ gõ tiếng Việt Unikey
-        apt-get install -y ibus ibus-unikey
-        echo "export GTK_IM_MODULE=ibus" >> /etc/profile
-        echo "export QT_IM_MODULE=ibus" >> /etc/profile
-        echo "export XMODIFIERS=@im=ibus" >> /etc/profile
+        # Thiết lập biến môi trường cho Fcitx nhận diện toàn hệ thống
+        echo "export GTK_IM_MODULE=fcitx" >> /etc/profile
+        echo "export QT_IM_MODULE=fcitx" >> /etc/profile
+        echo "export XMODIFIERS=@im=fcitx" >> /etc/profile
         
-        # 4. Cài đặt Google Chrome
-        wget https://google.com
-        apt-get install -y ./google-chrome-stable_current_amd64.deb
-        rm google-chrome-stable_current_amd64.deb
-        
-        # 5. Cấu hình giao diện macOS / RedStar tối giản cho XFCE và Plank
-        # Tạo thư mục chứa theme hệ thống
-        mkdir -p /usr/share/themes /usr/share/icons /etc/skel/.config/plank/dock1
+        # Tạo file tự động kích hoạt Fcitx khi user đăng nhập vào Desktop
         mkdir -p /etc/skel/.config/autostart
+        cat << 'INNER_EOF' > /etc/skel/.config/autostart/fcitx.desktop
+        [Desktop Entry]
+        Type=Application
+        Exec=fcitx -d
+        Hidden=false
+        NoDisplay=false
+        X-GNOME-Autostart-enabled=true
+        Name=Fcitx Input Method
+        INNER_EOF
         
-        # Tải WhiteSur GTK Theme (Phong cách macOS tối giản rất hợp với RedStar)
+        # 3. Cấu hình giao diện Mac Layout (Cài theme sang trọng tối giản)
+        mkdir -p /usr/share/themes /usr/share/icons
         git clone https://github.com /tmp/WhiteSur
         cd /tmp/WhiteSur && ./install.sh -d /usr/share/themes
-        
-        # Tải bộ Icon phong cách Apple/macOS phẳng
         git clone https://github.com /tmp/WhiteSur-Icons
         cd /tmp/WhiteSur-Icons && ./install.sh -d /usr/share/icons
         
-        # Cấu hình XFCE mặc định sử dụng Theme và Icon mới cho user khi khởi động
+        # Ghi đè cấu hình XFCE mặc định sang giao diện Mac phẳng
         mkdir -p /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
-        
-        # Ép buộc XFCE load giao diện WhiteSur-Dark
         echo '<?xml version="1.0" encoding="UTF-8"?><channel name="xsettings" version="1.0"><property name="Net" type="empty"><property name="ThemeName" type="string" value="WhiteSur-Dark"/><property name="IconThemeName" type="string" value="WhiteSur-dark"/></property></channel>' > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
         
-        # Tự động kích hoạt Plank Dock ở cạnh dưới màn hình khi vào OS
+        # Tạo dock ứng dụng (Plank) chạy ngầm mặc định ở cạnh dưới màn hình
         cat << 'INNER_EOF' > /etc/skel/.config/autostart/plank.desktop
         [Desktop Entry]
         Type=Application
@@ -85,7 +84,7 @@ jobs:
         Name=Plank Dock
         INNER_EOF
         
-        # 6. Cấu hình Auto-Login thẳng vào màn hình làm việc không cần mật khẩu
+        # 4. Cấu hình Tự động đăng nhập thẳng vào hệ thống (Auto-Login)
         mkdir -p /etc/lightdm/lightdm.conf.d/
         cat << 'INNER_EOF' > /etc/lightdm/lightdm.conf.d/custom.conf
         [Seat:*]
@@ -94,26 +93,27 @@ jobs:
         autologin-user-timeout=0
         INNER_EOF
         
-        # 7. Thay đổi nhận diện thương hiệu thành DuyKhanhOS
+        # 5. Thay đổi tên nhận diện thương hiệu thành DuyKhanhOS
         sed -i 's/Xubuntu/DuyKhanhOS/g' /etc/hosts /etc/hostname || true
         echo "DuyKhanhOS Live v1.0" > /etc/issue
         
-        # Dọn dẹp hệ thống để tối ưu dung lượng ISO
+        # Dọn dẹp rác hệ thống để tiết kiệm từng MB dung lượng file nén
         apt-get clean
         rm -rf /tmp/* ~/.bash_history
         EOF
 
-    - name: Đóng gói lại hệ thống tệp tin SquashFS
+    - name: Đóng gói lại hệ thống tệp tin bằng thuật toán XZ đa luồng (Tối ưu dung lượng 2.0GB - 2.5GB)
       run: |
         sudo rm env/iso_new/casper/filesystem.squashfs
-        sudo mksquashfs env/filesystem env/iso_new/casper/filesystem.squashfs -comp xz
+        # Lệnh -T 0 kích hoạt toàn bộ luồng CPU của GitHub Runner để nén XZ nhanh hơn và chặt hơn
+        sudo mksquashfs env/filesystem env/iso_new/casper/filesystem.squashfs -comp xz -b 1M -T 0
 
     - name: Đổi tên hiển thị trên Menu Boot sang DuyKhanhOS
       run: |
         sudo find env/iso_new/boot/ -type f -exec sed -i 's/Xubuntu/DuyKhanhOS/g' {} + || true
         sudo find env/iso_new/isolinux/ -type f -exec sed -i 's/Xubuntu/DuyKhanhOS/g' {} + || true
 
-    - name: Tạo file ISO DuyKhanhOS hoàn chỉnh
+    - name: Đóng gói thành file ISO DuyKhanhOS hoàn chỉnh
       run: |
         cd env/iso_new
         sudo xorriso -as mkisofs -r -V "DuyKhanhOS" \

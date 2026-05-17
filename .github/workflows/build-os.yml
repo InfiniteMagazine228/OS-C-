@@ -19,7 +19,6 @@ jobs:
 
       - name: Extract System Core via Safe Docker
         run: |
-          # 1. Dọn sạch phân vùng và gỡ các mount ảo bị kẹt ngầm từ commit cũ để mở khóa ổ đĩa
           if [ -d chroot_dir ]; then
             sudo umount -l chroot_dir/dev || true
             sudo umount -l chroot_dir/proc || true
@@ -29,18 +28,18 @@ jobs:
           mkdir -p chroot_dir
           mkdir -p image/live
           
-          # 2. BẺ GÃY HOÀN TOÀN LỖI TAR/WGET: Trích xuất lõi hệ điều hành chuẩn từ Docker Hub chính thức
           docker create --name duykhanh_core ubuntu:noble
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
-      - name: Configure Official Standard DEB822 Repositories
+      - name: Destroy and Rebuild DEB822 Repositories
         run: |
+          # BẺ GÃY LỖI GỐC 100%: Xóa sạch file cấu hình ẩn mặc định của Docker gây nắn dòng mạng lỗi
           sudo rm -f chroot_dir/etc/apt/sources.list
           sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           
-          # 3. Ghi đè cấu trúc kho lưu trữ thô nguyên bản của Mỹ chạy qua giao thức HTTP tĩnh cổng 80
+          # Ghi đè cấu trúc DEB822 chuẩn của Ubuntu 24.04 trỏ trực tiếp về archive.ubuntu.com qua HTTP tĩnh
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/ubuntu.sources
           Types: deb
           URIs: http://ubuntu.com
@@ -49,12 +48,12 @@ jobs:
           Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
           EOF
 
-          # Cho phép hệ thống tự động tìm luồng tải CDN mạnh nhất và chặn đứng lỗi nắn dòng HTTPS 301
+          # Cho phép hệ thống chuyển hướng tự do và đồng bộ luồng tải CDN mạnh nhất của server
           sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf.d/99custom
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "false";
+          Acquire::http::AllowRedirect "true";
           EOF
 
       - name: Synchronize Network DNS
@@ -84,9 +83,8 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir apt-get update
           
-          # 4. Cài đặt môi trường đồ họa Mac-RedStar, Unikey, VLC, LibreOffice, Firefox và Calamares cài SSD
-          # Thêm cờ --fix-missing để tự sửa lỗi luồng tải mạng
-          sudo chroot chroot_dir apt-get install -y --fix-missing --allow-unauthenticated --no-install-recommends \
+          # Cài đặt môi trường đồ họa Mac-RedStar, bộ gõ Unikey, VLC, LibreOffice, Firefox và Calamares cài SSD
+          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv plymouth plymouth-themes \
             xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant firefox \
@@ -95,7 +93,6 @@ jobs:
 
       - name: Tweak Installer for Post-Install USB Eject Prompt
         run: |
-          # 5. Kích hoạt thông báo tự động yêu cầu rút USB sau khi cài xong hệ thống vào đĩa SSD cứng
           sudo sed -i 's/prompt=.*/prompt=true/g' chroot_dir/etc/casper.conf || true
           sudo mkdir -p chroot_dir/etc/calamares/modules
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/calamares/modules/finished.conf
@@ -106,7 +103,6 @@ jobs:
 
       - name: Create Custom Boot Splash Screen
         run: |
-          # 6. Tạo logo hoạt ảnh đồ họa hiện chữ DuyKhanhOS đen sẫm lúc mở máy
           sudo mkdir -p chroot_dir/usr/share/plymouth/themes/duykhanhos
           sudo cat <<'EOF' | sudo tee chroot_dir/usr/share/plymouth/themes/duykhanhos/duykhanhos.script
           Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
@@ -176,7 +172,6 @@ jobs:
           X-GNOME-Autostart-enabled=true
           EOF
 
-          # Kích hoạt 2GB Swap ảo cho nhân Live ISO
           sudo mkdir -p chroot_dir/etc/local.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
           #!/bin/sh -e

@@ -33,9 +33,15 @@ jobs:
 
     - name: Tùy biến hệ thống (Cài ứng dụng, Fcitx-Unikey, Mac layout)
       run: |
+        # Kết nối các thư mục hệ thống ảo cần thiết để chroot chạy mượt mà
+        sudo mount --bind /dev env/filesystem/dev
+        sudo mount --bind /dev/pts env/filesystem/dev/pts
+        sudo mount --bind /proc env/filesystem/proc
+        sudo mount --bind /sys env/filesystem/sys
         sudo cp /etc/resolv.conf env/filesystem/etc/resolv.conf
         
         sudo chroot env/filesystem /bin/bash << 'EOF'
+        export DEBIAN_FRONTEND=noninteractive
         apt-get update
         
         # 1. Cài đặt Trình quản lý mạng, Bluetooth và các ứng dụng đi kèm sẵn theo yêu cầu
@@ -102,10 +108,17 @@ jobs:
         rm -rf /tmp/* ~/.bash_history
         EOF
 
+        # GIẢI PHÁP SỬA LỖI EXIT CODE 32: Buộc giải phóng tất cả tiến trình và gỡ mount an toàn
+        sudo umount -l env/filesystem/dev/pts || true
+        sudo umount -l env/filesystem/dev || true
+        sudo umount -l env/filesystem/proc || true
+        sudo umount -l env/filesystem/sys || true
+
     - name: Đóng gói lại hệ thống tệp tin bằng thuật toán XZ đa luồng (Tối ưu dung lượng 2.0GB - 2.5GB)
       run: |
         sudo rm env/iso_new/casper/filesystem.squashfs
-        # Lệnh -T 0 kích hoạt toàn bộ luồng CPU của GitHub Runner để nén XZ nhanh hơn và chặt hơn
+        # Loại bỏ các thư mục rác tạm thời phát sinh giúp lệnh nén không bị kẹt mã khóa 32
+        sudo rm -rf env/filesystem/tmp/* env/filesystem/root/.bash_history
         sudo mksquashfs env/filesystem env/iso_new/casper/filesystem.squashfs -comp xz -b 1M -T 0
 
     - name: Đổi tên hiển thị trên Menu Boot sang DuyKhanhOS

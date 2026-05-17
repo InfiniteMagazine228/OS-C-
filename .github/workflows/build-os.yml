@@ -12,15 +12,20 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Install ISO Generation Tools on Host
+        run: |
+          # CHỐT HẠ LỖI CUỐI CÙNG: Cài đặt bắt buộc xorriso và grub-pc-bin lên Host ngoài để phục vụ đúc đĩa .iso
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools
+
       - name: Structure Clean ISO Tree
         run: |
-          # 1. DIỆT TẬN GỐC RÁC: Xóa sạch toàn bộ thư mục cũ để giải phóng đĩa cứng ảo bị tràn sau 100 commit
+          # Xóa sạch toàn bộ thư mục cũ để giải phóng đĩa cứng ảo bị tràn
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           mkdir -p image/live
 
-          # 2. BƠM FILE SIÊU TỐC THÔ: Chỉ sao chép các tệp tin hệ thống cơ bản có sẵn để chạy lệnh
-          # Hoàn toàn không tải mạng, triệt tiêu vĩnh viễn 100% lỗi Exit code 100 và lỗi 404 mạng
+          # Sao chép các tệp tin hệ thống cơ bản có sẵn để chạy lệnh
           sudo cp -a /bin chroot_dir/bin
           sudo cp -a /sbin chroot_dir/sbin
           sudo cp -a /lib chroot_dir/lib
@@ -50,7 +55,7 @@ jobs:
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          # 3. Trích xuất trực tiếp nhân boot thực tế của máy chủ nạp vào phân vùng đĩa ISO
+          # Trích xuất trực tiếp nhân boot thực tế của máy chủ nạp vào phân vùng đĩa ISO
           sudo cp /boot/vmlinuz-$(uname -r) image/live/vmlinuz
           sudo cp /boot/initrd.img-$(uname -r) image/live/initrd.img
           
@@ -71,7 +76,7 @@ jobs:
 
       - name: Generate Production Bootable ISO
         run: |
-          # Đúc file đĩa ISO thành phẩm hoàn chỉnh bằng lệnh Host sạch
+          # Đúc file đĩa ISO thành phẩm hoàn chỉnh bằng lệnh xorriso vừa cài đặt
           grub-mkrescue -o duykhanhos-production.iso image
 
       - name: Upload Finished System ISO

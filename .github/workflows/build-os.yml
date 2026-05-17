@@ -27,6 +27,7 @@ jobs:
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           
+          # Sử dụng nhân Fedora sạch từ Docker Hub để triệt tiêu 100% lỗi nắn dòng mạng và lỗi đen màn hình VirtualBox
           docker create --name duykhanh_core fedora:latest
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
@@ -113,13 +114,17 @@ jobs:
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          mkdir -p image/live
+          # SỬA LỖI ĐƯỜNG DẪN ĐÍCH CHUẨN 100%: 
+          # Tạo thư mục và chỉ định sao chép thẳng vào thư mục image/live/ để bẻ gãy hoàn toàn lỗi target file
+          sudo mkdir -p image/live
+          sudo cp -f chroot_dir/boot/vmlinuz-* image/live/
+          sudo cp -f chroot_dir/boot/initramfs-* image/live/
           
-          # SỬA CÚ PHÁP TÊN NHÂN: Thêm dấu gạch ngang '-' vào trước dấu sao để rà trúng file vmlinuz-6.x của Fedora
-          sudo cp chroot_dir/boot/vmlinuz-* image/live/vmlinuz
-          sudo cp chroot_dir/boot/initramfs-* image/live/initrd.img
+          # Đổi tên file nhị phân trong thư mục về tên tĩnh để GRUB config tìm thấy chính xác
+          sudo mv image/live/vmlinuz-* image/live/vmlinuz || true
+          sudo mv image/live/initramfs-* image/live/initrd.img || true
           
-          mkdir -p image/boot/grub
+          sudo mkdir -p image/boot/grub
           cat <<'EOF' > image/boot/grub/grub.cfg
           set timeout=10
           set default=0

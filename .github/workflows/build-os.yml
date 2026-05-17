@@ -14,13 +14,11 @@ jobs:
 
       - name: Install ISO Generation Tools on Host
         run: |
-          # CHỐT HẠ LỖI CUỐI CÙNG: Cài đặt bắt buộc xorriso và grub-pc-bin lên Host ngoài để phục vụ đúc đĩa .iso
           sudo apt-get update
           sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools
 
       - name: Structure Clean ISO Tree
         run: |
-          # Xóa sạch toàn bộ thư mục cũ để giải phóng đĩa cứng ảo bị tràn
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           mkdir -p image/live
@@ -38,7 +36,6 @@ jobs:
 
       - name: Configure Auto-Login and User Account
         run: |
-          # Khởi tạo tài khoản thực thi quyền quản trị sudo miễn mật khẩu để bạn tập gõ lệnh trên USB
           sudo useradd -R chroot_dir -m -s /bin/bash -g sudo duykhanh || true
           sudo chroot chroot_dir passwd -d duykhanh || true
 
@@ -50,12 +47,11 @@ jobs:
 
       - name: Compress System Core into SquashFS
         run: |
-          # Nén đa luồng hệ thống cốt lõi siêu tốc xong luôn trong 20 giây vì hệ thống siêu nhẹ
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          # Trích xuất trực tiếp nhân boot thực tế của máy chủ nạp vào phân vùng đĩa ISO
+          # Trích xuất nhân boot thực tế của máy chủ nạp vào phân vùng đĩa ISO bằng quyền sudo
           sudo cp /boot/vmlinuz-$(uname -r) image/live/vmlinuz
           sudo cp /boot/initrd.img-$(uname -r) image/live/initrd.img
           
@@ -68,7 +64,7 @@ jobs:
               linux /live/vmlinuz boot=casper quiet splash
               initrd /live/initrd.img
           }
-          menuentry "2. Install DuyKhanhOS vĩnh viễn vào SSD (Bootable Installer)" {
+          menuentry "2. Install DuyKhanhOS vĩnh viễn vào SSD" {
               linux /live/vmlinuz boot=casper toram quiet splash
               initrd /live/initrd.img
           }
@@ -76,7 +72,10 @@ jobs:
 
       - name: Generate Production Bootable ISO
         run: |
-          # Đúc file đĩa ISO thành phẩm hoàn chỉnh bằng lệnh xorriso vừa cài đặt
+          # SỬA LỖI LỚN 100%: Mở khóa toàn diện đặc quyền cho file vmlinuz và initrd.img
+          # Giúp xorriso có toàn quyền truy cập để đúc đĩa thành công mà không bị báo lỗi Access to file is not allowed
+          sudo chmod -R 755 image
+          
           grub-mkrescue -o duykhanhos-production.iso image
 
       - name: Upload Finished System ISO

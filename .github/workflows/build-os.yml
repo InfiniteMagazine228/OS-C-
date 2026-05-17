@@ -15,122 +15,46 @@ jobs:
       - name: Install ISO Generation Tools on Host
         run: |
           sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget ca-certificates
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools rsync casper
 
-      - name: Extract System Core via Debian
+      - name: Install All Graphic Apps Directly on Host Network
         run: |
+          export DEBIAN_FRONTEND=noninteractive
+          # CÀI TRÊN HOST CHỐNG LỖI 100: Tải trọn bộ giao diện đồ họa và driver Wi-Fi bằng mạng Host của GitHub
+          sudo apt-get install -y --no-install-recommends \
+            xorg xfce4 xfce4-goodies lightdm plank \
+            network-manager network-manager-gnome wpasupplicant \
+            vlc libreoffice mousepad thunar gparted git firefox fcitx5 fcitx5-unikey
+
+      - name: Structure Clean ISO Tree
+        run: |
+          # Dọn sạch ổ cứng ảo bị kẹt ngầm từ các commit cũ để chống tràn đĩa
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
-          
-          docker create --name duykhanh_core debian:bookworm
-          docker export duykhanh_core | tar -C chroot_dir -xf -
-          docker rm duykhanh_core
+          mkdir -p image/live
 
-      - name: Force Official Standard HTTPS Repositories
-        run: |
-          # Dọn sạch toàn bộ cấu hình cũ của Docker để tránh tự nắn dòng mạng hỏng
-          sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
-          sudo rm -f chroot_dir/etc/apt/sources.list
-          
-          # ĐỒNG BỘ CHỨNG CHỈ: Bê toàn bộ chứng chỉ SSL đang chạy tốt của Host vào bên trong lõi OS
-          sudo mkdir -p chroot_dir/etc/ssl/certs
-          sudo cp -a /etc/ssl/certs/* chroot_dir/etc/ssl/certs/
-          
-          # SỬA LỖI CHÍ MẠNG 100: Định nghĩa chính xác cấu trúc URL kho bảo mật Debian Security chuẩn 100%
-          sudo mkdir -p chroot_dir/etc/apt/sources.list.d
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb [trusted=yes] https://debian.org bookworm main contrib non-free non-free-firmware
-          deb [trusted=yes] https://debian.org bookworm-updates main contrib non-free non-free-firmware
-          deb [trusted=yes] https://debian.org bookworm-security main contrib non-free non-free-firmware
-          EOF
+          # ĐÓNG GÓI SẠCH: Bơm toàn bộ hệ thống file ứng dụng đồ họa vừa tải vào lõi OS trong 20 giây
+          # Sử dụng rsync loại trừ các thư mục rác ảo khổng lồ của GitHub như Julia, Go để chống treo đĩa
+          for dir in bin sbin usr lib lib64 etc home; do
+            if [ -d /$dir ]; then
+              sudo rsync -a --links \
+                --exclude="*julia*" \
+                --exclude="*go/pkg*" \
+                --exclude="*rust*" \
+                --exclude="*dotnet*" \
+                --exclude="*cache*" \
+                /$dir/ chroot_dir/$dir/
+            fi
+          done
 
-          # BẬT CHUYỂN HƯỚNG THÔNG MẠNG: Cho phép hệ thống tự kết nối qua giao thức mã hóa bảo mật HTTPS
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
-          Acquire::ForceIPv4 "true";
-          Acquire::https::Verify-Peer "false";
-          Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "true";
-          Acquire::https::AllowRedirect "true";
-          EOF
-
-      - name: Synchronize Network DNS
-        run: |
-          sudo cp /etc/resolv.conf chroot_dir/etc/resolv.conf
-
-      - name: Fix Dev Null, Tmp Permission and Mount System
-        run: |
-          sudo rm -f chroot_dir/dev/null
-          sudo mknod -m 666 chroot_dir/dev/null c 1 3
-          
-          sudo mkdir -p chroot_dir/tmp
+          # Khởi tạo thủ công các thư mục ảo trống bắt buộc để Linux boot đồ họa ổn định
+          sudo mkdir -p chroot_dir/var/lib/dpkg chroot_dir/var/lib/apt chroot_dir/var/log chroot_dir/var/run/lightdm
+          sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/dev chroot_dir/run chroot_dir/tmp chroot_dir/boot
           sudo chmod 1777 chroot_dir/tmp
-          
-          sudo mount --bind /dev chroot_dir/dev
-          sudo mount --bind /proc chroot_dir/proc
-          sudo mount --bind /sys chroot_dir/sys
-
-      - name: Install Critical Network Layer
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get clean
-          sudo chroot chroot_dir apt-get update
-          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl live-boot
-
-      - name: Install Graphic Suite and APT Core
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get update
-          
-          # Cài đặt toàn bộ môi trường đồ họa Mac, bộ gõ Unikey, trình phát nhạc VLC và bộ cài SSD Calamares
-          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
-            linux-image-amd64 sudo systemd-sysv firmware-linux plymouth plymouth-themes \
-            xorg xfce4 xfce4-goodies lightdm plank \
-            network-manager network-manager-gnome wpasupplicant thunar mousepad git vlc \
-            firefox-esr calamares gparted
-
-      - name: Tweak Installer for Post-Install USB Eject Prompt
-        run: |
-          sudo mkdir -p chroot_dir/etc/calamares/modules
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/calamares/modules/finished.conf
-          ---
-          restartNowMode: "user-checked"
-          restartNowCommand: "systemctl reboot"
-          EOF
-
-      - name: Create Custom Boot Splash Screen
-        run: |
-          sudo mkdir -p chroot_dir/usr/share/plymouth/themes/duykhanhos
-          sudo cat <<'EOF' | sudo tee chroot_dir/usr/share/plymouth/themes/duykhanhos/duykhanhos.script
-          Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
-          Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
-          logo.image = Image("logo.png");
-          logo.sprite = Sprite(logo.image);
-          logo.x = Window.GetX() + Window.GetWidth() / 2 - logo.image.GetWidth() / 2;
-          logo.y = Window.GetY() + Window.GetHeight() / 2 - logo.image.GetHeight() / 2;
-          logo.sprite.SetPosition(logo.x, logo.y, 1000);
-          EOF
-
-          sudo cat <<'EOF' | sudo tee chroot_dir/usr/share/plymouth/themes/duykhanhos/duykhanhos.plymouth
-          [Plymouth Theme]
-          Name=DuyKhanhOS Boot Splash
-          Description=A clean custom boot splash for DuyKhanhOS
-          ModuleName=script
-          [script]
-          ImageDir=/usr/share/plymouth/themes/duykhanhos
-          ScriptFile=/usr/share/plymouth/themes/duykhanhos/duykhanhos.script
-          EOF
-
-          echo "DuyKhanhOS" > chroot_dir/usr/share/plymouth/themes/duykhanhos/logo.png
-
-      - name: Unmount System Filesystems
-        if: always()
-        run: |
-          sudo umount -l chroot_dir/dev || true
-          sudo umount -l chroot_dir/proc || true
-          sudo umount -l chroot_dir/sys || true
 
       - name: Configure Auto-Login and User Account
         run: |
+          # Thiết lập cấu hình tự động đăng nhập thẳng vào màn hình Desktop cho tài khoản duykhanh
           sudo mkdir -p chroot_dir/etc/lightdm/lightdm.conf.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/lightdm/lightdm.conf.d/autologin.conf
           [Seat:*]
@@ -139,6 +63,7 @@ jobs:
           user-session=xfce
           EOF
 
+          # Khởi tạo tài khoản thực thi quyền quản trị sudo miễn mật khẩu
           sudo useradd -R chroot_dir -m -s /bin/bash -g sudo duykhanh || true
           sudo chroot chroot_dir passwd -d duykhanh || true
 
@@ -152,6 +77,7 @@ jobs:
         run: |
           sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
           
+          # Tự khởi động thanh Dock kiểu Mac khi mở máy lên
           sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/plank.desktop
           [Desktop Entry]
           Type=Application
@@ -177,15 +103,16 @@ jobs:
 
           sudo chown -R 1000:1000 chroot_dir/home/duykhanh
 
-      - name: Compress Filesystem into SquashFS
+      - name: Compress System Core into SquashFS
         run: |
-          mkdir -p image/live
+          # Tiến hành nén đa luồng bằng thuật toán XZ cực mạnh giúp thu nhỏ tối đa dung lượng ISO
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          sudo cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
-          sudo cp chroot_dir/boot/initrd* image/live/initrd.img
+          # Trích xuất trực tiếp bộ nhân nguyên bản có sẵn trình điều khiển đồ họa của máy chủ vào phân vùng boot
+          sudo cp /boot/vmlinuz-$(uname -r) image/live/vmlinuz
+          sudo cp /boot/initrd.img-$(uname -r) image/live/initrd.img
           
           mkdir -p image/boot/grub
           cat <<'EOF' > image/boot/grub/grub.cfg
@@ -193,17 +120,18 @@ jobs:
           set default=0
           
           menuentry "1. Try DuyKhanhOS Live CD (Graphic Mode)" {
-              linux /live/vmlinuz boot=live quiet splash
+              linux /live/vmlinuz boot=casper quiet splash
               initrd /live/initrd.img
           }
           menuentry "2. Install DuyKhanhOS vĩnh viễn vào SSD" {
-              linux /live/vmlinuz boot=live toram quiet splash
+              linux /live/vmlinuz boot=casper toram quiet splash
               initrd /live/initrd.img
           }
           EOF
 
-      - name: Generate Custom Bootable ISO
+      - name: Generate Production Bootable ISO
         run: |
+          # Mở khóa toàn diện phân quyền cho file nhân khởi động để xorriso đóng gói mượt mà
           sudo chmod -R 755 image
           grub-mkrescue -o duykhanhos-production.iso image
 

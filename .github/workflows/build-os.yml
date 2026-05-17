@@ -32,14 +32,19 @@ jobs:
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
-      - name: Destroy and Rebuild DEB822 Repositories
+      - name: Wipe Ubuntu Pro ESM and Rebuild Repositories
         run: |
-          # BẺ GÃY LỖI GỐC 100%: Xóa sạch file cấu hình ẩn mặc định của Docker gây nắn dòng mạng lỗi
+          # 1. PHÁ HỦY TẬN GỐC PLUGIN UBUNTU PRO CAUSE LỖI 404
+          # Vô hiệu hóa file script chạy ngầm tự nắn dòng mạng của Canonical
+          sudo rm -f chroot_dir/etc/apt/apt.conf.d/20apt-esm-infra || true
+          sudo rm -f chroot_dir/etc/apt/apt.conf.d/60ubuntu-management || true
+          
+          # 2. Xóa sạch file cấu hình nguồn DEB822 ẩn cũ
           sudo rm -f chroot_dir/etc/apt/sources.list
           sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           
-          # Ghi đè cấu trúc DEB822 chuẩn của Ubuntu 24.04 trỏ trực tiếp về archive.ubuntu.com qua HTTP tĩnh
+          # 3. Ghi đè cấu trúc DEB822 chuẩn trỏ thẳng về kho gương tĩnh của Mỹ
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list.d/ubuntu.sources
           Types: deb
           URIs: http://ubuntu.com
@@ -48,12 +53,14 @@ jobs:
           Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
           EOF
 
-          # Cho phép hệ thống chuyển hướng tự do và đồng bộ luồng tải CDN mạnh nhất của server
+          # 4. Khóa cứng APT: Cấm tự nắn dòng mạng, vô hiệu hóa các thông báo check bản quyền Pro ngầm
           sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf.d/99custom
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "true";
+          Acquire::http::AllowRedirect "false";
+          Binary::apt::APT::Keep-Downloaded-Packages "0";
+          APT::Periodic::Update-Package-Lists "0";
           EOF
 
       - name: Synchronize Network DNS
@@ -75,15 +82,16 @@ jobs:
       - name: Install Critical Network Layer
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get update
+          # Ép lệnh apt chạy độc lập không kích hoạt các hook của ESM Pro
+          sudo chroot chroot_dir apt-get -o APT::Update::Post-Invoke-Success::="" update
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated ca-certificates apt-transport-https gnupg curl
 
       - name: Install Graphic Suite and Core Applications
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get update
+          sudo chroot chroot_dir apt-get -o APT::Update::Post-Invoke-Success::="" update
           
-          # Cài đặt môi trường đồ họa Mac-RedStar, bộ gõ Unikey, VLC, LibreOffice, Firefox và Calamares cài SSD
+          # Cài đặt đầy đủ môi trường đồ họa Mac, bộ gõ Unikey, VLC, LibreOffice, Firefox và Calamares cài SSD
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
             linux-image-generic casper sudo systemd-sysv plymouth plymouth-themes \
             xorg xfce4 xfce4-goodies lightdm plank \

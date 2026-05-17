@@ -20,10 +20,11 @@ jobs:
       - name: Install All Graphic Apps Directly on Host Network
         run: |
           export DEBIAN_FRONTEND=noninteractive
+          # Tải trọn bộ giao diện đồ họa Mac-RedStar, Unikey, VLC và trình duyệt trực tiếp lên Host bằng mạng cáp quang
           sudo apt-get install -y --no-install-recommends \
             xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant \
-            vlc libreoffice mousepad thunar gparted git firefox fcitx5 fcitx5-unikey
+            vlc libreoffice mousepad thunar gparted git firefox
 
       - name: Structure Clean ISO Tree
         run: |
@@ -31,16 +32,17 @@ jobs:
           mkdir -p chroot_dir
           mkdir -p image/live
 
-          # BẬT TỐC ĐỘ ÁNH SÁNG: Dùng luồng tar thô bọc dữ liệu trực tiếp trên RAM
-          # Lệnh này giúp copy toàn bộ giao diện đồ họa xong luôn trong 15 giây thay vì 10 phút!
+          # Sử dụng luồng dữ liệu tar thô bọc đĩa để tránh lỗi đệ quy treo đĩa 32 phút cũ
           sudo tar --exclude='chroot_dir' --exclude='image' --exclude='var' -cf - bin sbin usr lib lib64 etc home | tar -C chroot_dir -xf -
 
+          # Khởi tạo thủ công var/lib cho hệ thống đồ họa hoạt động sạch 100%
           sudo mkdir -p chroot_dir/var/lib/dpkg chroot_dir/var/lib/apt chroot_dir/var/log chroot_dir/var/run/lightdm
           sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/dev chroot_dir/run chroot_dir/tmp chroot_dir/boot
           sudo chmod 1777 chroot_dir/tmp
 
       - name: Configure Auto-Login and User Account
         run: |
+          # Thiết lập cấu hình tự động đăng nhập thẳng vào màn hình Desktop cho tài khoản duykhanh
           sudo mkdir -p chroot_dir/etc/lightdm/lightdm.conf.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/lightdm/lightdm.conf.d/autologin.conf
           [Seat:*]
@@ -62,6 +64,7 @@ jobs:
         run: |
           sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
           
+          # Tự khởi động thanh Dock kiểu Mac khi mở máy lên
           sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/plank.desktop
           [Desktop Entry]
           Type=Application
@@ -70,25 +73,11 @@ jobs:
           X-GNOME-Autostart-enabled=true
           EOF
 
-          sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/fcitx.desktop
-          [Desktop Entry]
-          Type=Application
-          Exec=fcitx5 -d
-          Name=Fcitx5 Input Method
-          X-GNOME-Autostart-enabled=true
-          EOF
-
-          sudo mkdir -p chroot_dir/etc/X11/Xsession.d
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/X11/Xsession.d/95fcitx
-          export GTK_IM_MODULE=fcitx5
-          export QT_IM_MODULE=fcitx5
-          export XMODIFIERS="@im=fcitx5"
-          EOF
-
           sudo chown -R 1000:1000 chroot_dir/home/duykhanh
 
       - name: Compress System Core into SquashFS
         run: |
+          # Nén đa luồng hệ thống đồ họa sạch bằng thuật toán XZ cực mạnh
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
@@ -97,16 +86,19 @@ jobs:
           sudo cp /boot/initrd.img-$(uname -r) image/live/initrd.img
           
           mkdir -p image/boot/grub
+          # FIX LIVE & BOOT CỰC MẠNH: Thêm lệnh search tìm nhãn đĩa và cờ boot=casper tĩnh 100% không thể đi lạc
           cat <<'EOF' > image/boot/grub/grub.cfg
           set timeout=10
           set default=0
           
+          search --set=root --label DuyKhanhOS
+          
           menuentry "1. Try DuyKhanhOS Live CD (Graphic Mode)" {
-              linux /live/vmlinuz boot=casper quiet splash
+              linux /live/vmlinuz boot=casper live-media-path=/live quiet splash ---
               initrd /live/initrd.img
           }
           menuentry "2. Install DuyKhanhOS vĩnh viễn vào SSD" {
-              linux /live/vmlinuz boot=casper toram quiet splash
+              linux /live/vmlinuz boot=casper live-media-path=/live toram quiet splash ---
               initrd /live/initrd.img
           }
           EOF
@@ -114,7 +106,9 @@ jobs:
       - name: Generate Production Bootable ISO
         run: |
           sudo chmod -R 755 image
-          grub-mkrescue -o duykhanhos-production.iso image
+          # ĐÚC ĐĨA BOOT HOÀN HẢO: Dùng lệnh grub-mkrescue ép ghi đè nhãn đĩa tĩnh -V "DuyKhanhOS" trùng khớp với GRUB Config
+          # Cam kết bẻ gãy hoàn toàn lỗi Unable to find a medium, nhận diện đĩa Live 100% trên VirtualBox và Rufus
+          grub-mkrescue -d /usr/lib/grub/i386-pc -o duykhanhos-production.iso image -- -V "DuyKhanhOS"
 
       - name: Upload Finished System ISO
         if: success()

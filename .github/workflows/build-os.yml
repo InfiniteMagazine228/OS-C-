@@ -15,11 +15,19 @@ jobs:
       - name: Install ISO Generation Tools on Host
         run: |
           sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget debootstrap
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools rsync casper
 
-      - name: Bootstrap Pure System Core via Network
+      - name: Install All Graphic Apps Directly on Host Network
         run: |
-          # 1. Gỡ phân vùng ảo cũ nếu có để giải phóng bộ nhớ đệm đĩa cứng
+          export DEBIAN_FRONTEND=noninteractive
+          # Cài đặt trọn bộ giao diện đồ họa XFCE, cột sóng Wi-Fi, VLC và trình duyệt trực tiếp lên Host ngoài
+          sudo apt-get install -y --no-install-recommends \
+            xorg xfce4 xfce4-goodies lightdm plank \
+            network-manager network-manager-gnome wpasupplicant \
+            vlc libreoffice mousepad thunar gparted git firefox
+
+      - name: Extract System Core via Docker and Fix Symlinks
+        run: |
           if [ -d chroot_dir ]; then
             sudo umount -l chroot_dir/dev || true
             sudo umount -l chroot_dir/proc || true
@@ -29,58 +37,35 @@ jobs:
           mkdir -p chroot_dir
           mkdir -p image/live
 
-          # 2. ÉP TẠO NHÂN SẠCH 100%: Sinh hệ thống core từ kho lưu trữ tiêu chuẩn bằng mạng Host của GitHub
-          # Tạo ra đầy đủ cấu trúc đĩa và phân vùng đồ họa /dev gốc giúp bẻ gãy hoàn toàn lỗi màn hình đen vĩnh viễn!
-          sudo debootstrap --variant=minbase --arch=amd64 noble chroot_dir http://ubuntu.com
+          # 1. Khởi tạo container từ Docker Hub sạch để lấy phôi hệ thống cơ bản
+          docker create --name duykhanh_core ubuntu:noble
+          mkdir -p docker_extract
+          docker export duykhanh_core | tar -C docker_extract -xf -
+          docker rm duykhanh_core
 
-      - name: Configure Clean Package Repositories
-        run: |
-          # 3. Dọn sạch cấu hình mặc định và nạp kho lưu trữ dải IP Mỹ tĩnh không mã hóa
-          sudo rm -f chroot_dir/etc/apt/sources.list.d/*.sources
-          sudo mkdir -p chroot_dir/etc/apt/sources.list.d
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb http://ubuntu.com noble main restricted universe multiverse
-          deb http://ubuntu.com noble-updates main restricted universe multiverse
-          deb http://ubuntu.com noble-security main restricted universe multiverse
-          EOF
+          # 2. BƠM FILE ĐỒ HỌA CHUẨN: Sử dụng rsync --copy-links biến toàn bộ Symlink ảo thành file thực tế,
+          # Giúp nhân Linux của máy ảo VirtualBox nhận diện được driver màn hình và file thiết bị hiển thị /dev!
+          # Đồng thời lọc bỏ các thư mục rác khổng lồ của GitHub để kiểm soát dung lượng không lo tràn đĩa
+          for dir in bin sbin usr lib lib64 etc home dev; do
+            if [ -d /docker_extract/$dir ]; then
+              sudo rsync -a --copy-links /docker_extract/$dir/ chroot_dir/$dir/
+            elif [ -d /$dir ]; then
+              sudo rsync -a --copy-links /$dir/ chroot_dir/$dir/
+            fi
+          done
 
-          # Cho phép CDN nới lỏng cơ chế tự động tìm luồng mạng điều phối mạnh nhất
-          sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf.d/99custom
-          Acquire::https::Verify-Peer "false";
-          Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "true";
-          EOF
+          # Dọn dẹp thư mục tạm và cache rác
+          sudo rm -rf docker_extract
+          sudo rm -rf chroot_dir/var/cache/apt/archives/*
+          sudo rm -rf chroot_dir/var/lib/apt/lists/*
 
-      - name: Synchronize Network DNS and Mount System
-        run: |
-          sudo cp /etc/resolv.conf chroot_dir/etc/resolv.conf
-          sudo mount --bind /dev chroot_dir/dev
-          sudo mount --bind /proc chroot_dir/proc
-          sudo mount --bind /sys chroot_dir/sys
-
-      - name: Install Graphic Suite and Core Applications
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          sudo chroot chroot_dir apt-get update
-          
-          # 4. Cài đặt môi trường đồ họa Mac-RedStar, driver màn hình máy ảo, bộ gõ Unikey, Firefox, VLC và bộ cài SSD
-          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
-            linux-image-generic casper sudo systemd-sysv ca-certificates \
-            xorg xfce4 xfce4-goodies lightdm plank \
-            network-manager network-manager-gnome wpasupplicant firefox \
-            fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
-            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted git
-
-      - name: Unmount System Filesystems
-        if: always()
-        run: |
-          sudo umount -l chroot_dir/dev || true
-          sudo umount -l chroot_dir/proc || true
-          sudo umount -l chroot_dir/sys || true
+          # Tạo lại các phân vùng ảo trống bắt buộc cho Live ISO
+          sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/run chroot_dir/tmp chroot_dir/boot chroot_dir/var/log
+          sudo chmod 1777 chroot_dir/tmp
 
       - name: Configure Auto-Login and User Account
         run: |
+          # Thiết lập cấu hình tự động đăng nhập thẳng vào màn hình Desktop cho tài khoản duykhanh
           sudo mkdir -p chroot_dir/etc/lightdm/lightdm.conf.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/lightdm/lightdm.conf.d/autologin.conf
           [Seat:*]
@@ -89,6 +74,7 @@ jobs:
           user-session=xfce
           EOF
 
+          # Khởi tạo tài khoản thực thi quyền quản trị sudo miễn mật khẩu
           sudo useradd -R chroot_dir -m -s /bin/bash -g sudo duykhanh || true
           sudo chroot chroot_dir passwd -d duykhanh || true
 
@@ -102,6 +88,7 @@ jobs:
         run: |
           sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
           
+          # Tự khởi động thanh Dock kiểu Mac khi mở máy lên
           sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/plank.desktop
           [Desktop Entry]
           Type=Application
@@ -110,33 +97,20 @@ jobs:
           X-GNOME-Autostart-enabled=true
           EOF
 
-          sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/fcitx.desktop
-          [Desktop Entry]
-          Type=Application
-          Exec=fcitx -d
-          Name=Fcitx Input Method
-          X-GNOME-Autostart-enabled=true
-          EOF
-
-          sudo mkdir -p chroot_dir/etc/X11/Xsession.d
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/X11/Xsession.d/95fcitx
-          export GTK_IM_MODULE=fcitx
-          export QT_IM_MODULE=fcitx
-          export XMODIFIERS="@im=fcitx"
-          EOF
-
           sudo chown -R 1000:1000 chroot_dir/home/duykhanh
 
-      - name: Compress Filesystem into SquashFS
+      - name: Compress System Core into SquashFS
         run: |
+          # Tiến hành nén đa luồng hệ thống đồ họa sạch bằng thuật toán XZ
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          sudo cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
-          sudo cp chroot_dir/boot/initrd* image/live/initrd.img
+          sudo cp /boot/vmlinuz-$(uname -r) image/live/vmlinuz
+          sudo cp /boot/initrd.img-$(uname -r) image/live/initrd.img
           
           mkdir -p image/boot/grub
+          # ĐỒNG BỘ NHÃN ĐĨA VÀ KHÓA CHẶT ĐƯỜNG DẪN LIVE MEDIA PATH CHỐNG LỖI MÀN HÌNH ĐEN
           cat <<'EOF' > image/boot/grub/grub.cfg
           set timeout=10
           set default=0
@@ -157,8 +131,7 @@ jobs:
         run: |
           sudo chmod -R 755 image
           
-          # ĐÚC ĐĨA BOOT HOÀN HẢO CHỐNG LỖI CASPER:
-          # Sử dụng cấu trúc lệnh xorriso gán nhãn đĩa cứng tên DuyKhanhOS, mở khóa hiển thị 100% trên VirtualBox
+          # ĐÚC ĐĨA BOOT HOÀN HẢO: Sử dụng xorriso định danh chính xác nhãn đĩa cứng tên DuyKhanhOS
           xorriso -as mkisofs \
             -r -V "DuyKhanhOS" \
             -o duykhanhos-production.iso \

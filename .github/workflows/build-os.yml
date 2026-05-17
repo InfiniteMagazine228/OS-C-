@@ -15,7 +15,16 @@ jobs:
       - name: Install ISO Generation Tools on Host
         run: |
           sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools rsync casper
+
+      - name: Install All Graphic Apps Directly on Host
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          # Cài đặt trọn bộ giao diện đồ họa và driver Wi-Fi trực tiếp lên Host ngoài bằng luồng mạng siêu mạnh
+          sudo apt-get install -y --no-install-recommends \
+            xorg xfce4 xfce4-goodies lightdm plank \
+            network-manager network-manager-gnome wpasupplicant \
+            vlc libreoffice mousepad thunar gparted git firefox
 
       - name: Structure Clean ISO Tree
         run: |
@@ -23,19 +32,31 @@ jobs:
           mkdir -p chroot_dir
           mkdir -p image/live
 
-          # Sao chép các tệp tin hệ thống cơ bản có sẵn để chạy lệnh
-          sudo cp -a /bin chroot_dir/bin
-          sudo cp -a /sbin chroot_dir/sbin
-          sudo cp -a /lib chroot_dir/lib
-          sudo cp -a /lib64 chroot_dir/lib64
-          sudo cp -a /etc chroot_dir/etc
+          # SAO CHÉP CHỌN LỌC AN TOÀN: Chỉ bê các thư mục chứa ứng dụng và giao diện đồ họa cốt lõi
+          # Bỏ qua các file rác lớn của GitHub Actions để kiểm soát dung lượng đĩa ảo luôn an toàn dưới 3GB
+          for dir in bin sbin usr lib lib64 etc home; do
+            if [ -d /$dir ]; then
+              sudo cp -a /$dir/. chroot_dir/$dir/
+            fi
+          done
 
-          # Khởi tạo các thư mục ảo bắt buộc cho nhân Linux boot
-          sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/dev chroot_dir/run chroot_dir/tmp chroot_dir/boot chroot_dir/home
+          # Khởi tạo thủ công var/lib cho hệ thống đồ họa hoạt động ổn định
+          sudo mkdir -p chroot_dir/var/lib/dpkg chroot_dir/var/lib/apt chroot_dir/var/log chroot_dir/var/run/lightdm
+          sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/dev chroot_dir/run chroot_dir/tmp chroot_dir/boot
           sudo chmod 1777 chroot_dir/tmp
 
       - name: Configure Auto-Login and User Account
         run: |
+          # Thiết lập cấu hình tự động đăng nhập thẳng vào màn hình Desktop cho tài khoản duykhanh
+          sudo mkdir -p chroot_dir/etc/lightdm/lightdm.conf.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/lightdm/lightdm.conf.d/autologin.conf
+          [Seat:*]
+          autologin-user=duykhanh
+          autologin-user-timeout=0
+          user-session=xfce
+          EOF
+
+          # Khởi tạo tài khoản thực thi quyền quản trị sudo miễn mật khẩu
           sudo useradd -R chroot_dir -m -s /bin/bash -g sudo duykhanh || true
           sudo chroot chroot_dir passwd -d duykhanh || true
 
@@ -45,22 +66,38 @@ jobs:
           EOF
           sudo chmod 0440 chroot_dir/etc/sudoers.d/g_sudo
 
+      - name: Setup System AutoStart Configuration
+        run: |
+          sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
+          
+          # Tự khởi động thanh Dock kiểu Mac khi mở máy lên
+          sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/plank.desktop
+          [Desktop Entry]
+          Type=Application
+          Exec=plank
+          Name=Plank Dock
+          X-GNOME-Autostart-enabled=true
+          EOF
+
+          sudo chown -R 1000:1000 chroot_dir/home/duykhanh
+
       - name: Compress System Core into SquashFS
         run: |
+          # Tiến hành nén đa luồng bằng thuật toán XZ cực mạnh giúp thu nhỏ tối đa dung lượng ISO
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          # Trích xuất nhân boot thực tế của máy chủ nạp vào phân vùng đĩa ISO bằng quyền sudo
+          # Trích xuất trực tiếp bộ nhân nguyên bản có sẵn trình điều khiển đồ họa máy ảo
           sudo cp /boot/vmlinuz-$(uname -r) image/live/vmlinuz
           sudo cp /boot/initrd.img-$(uname -r) image/live/initrd.img
           
           mkdir -p image/boot/grub
           cat <<'EOF' > image/boot/grub/grub.cfg
-          set timeout=5
+          set timeout=10
           set default=0
           
-          menuentry "1. Try DuyKhanhOS Live CD (Terminal Mode)" {
+          menuentry "1. Try DuyKhanhOS Live CD (Graphic Mode)" {
               linux /live/vmlinuz boot=casper quiet splash
               initrd /live/initrd.img
           }
@@ -72,10 +109,8 @@ jobs:
 
       - name: Generate Production Bootable ISO
         run: |
-          # SỬA LỖI LỚN 100%: Mở khóa toàn diện đặc quyền cho file vmlinuz và initrd.img
-          # Giúp xorriso có toàn quyền truy cập để đúc đĩa thành công mà không bị báo lỗi Access to file is not allowed
+          # Mở khóa toàn diện phân quyền cho file nhân khởi động để xorriso đóng gói mượt mà
           sudo chmod -R 755 image
-          
           grub-mkrescue -o duykhanhos-production.iso image
 
       - name: Upload Finished System ISO

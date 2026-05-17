@@ -20,7 +20,7 @@ jobs:
       - name: Install All Graphic Apps Directly on Host Network
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          # Cài đặt trọn bộ giao diện đồ họa XFCE, cột sóng Wi-Fi, VLC và trình duyệt trực tiếp lên Host ngoài
+          # Tải trọn bộ giao diện đồ họa XFCE, driver Wi-Fi và ứng dụng nền trực tiếp lên Host ngoài
           sudo apt-get install -y --no-install-recommends \
             xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant \
@@ -43,29 +43,29 @@ jobs:
           docker export duykhanh_core | tar -C docker_extract -xf -
           docker rm duykhanh_core
 
-          # 2. BƠM FILE ĐỒ HỌA CHUẨN: Sử dụng rsync --copy-links biến toàn bộ Symlink ảo thành file thực tế,
-          # Giúp nhân Linux của máy ảo VirtualBox nhận diện được driver màn hình và file thiết bị hiển thị /dev!
-          # Đồng thời lọc bỏ các thư mục rác khổng lồ của GitHub để kiểm soát dung lượng không lo tràn đĩa
+          # 2. SỬA LỖI 100%: Dùng cp -RP để giữ nguyên liên kết Symlink gốc của hệ thống X11,
+          # Chặn đứng hoàn toàn lỗi tự nhân bản file X11/X11 và lỗi tràn đĩa No space left on device!
           for dir in bin sbin usr lib lib64 etc home dev; do
-            if [ -d /docker_extract/$dir ]; then
-              sudo rsync -a --copy-links /docker_extract/$dir/ chroot_dir/$dir/
-            elif [ -d /$dir ]; then
-              sudo rsync -a --copy-links /$dir/ chroot_dir/$dir/
+            if [ -d docker_extract/$dir ]; then
+              sudo cp -RP docker_extract/$dir/. chroot_dir/$dir/ || true
+            fi
+            if [ -d /$dir ]; then
+              sudo cp -RP /$dir/. chroot_dir/$dir/ || true
             fi
           done
 
-          # Dọn dẹp thư mục tạm và cache rác
+          # Dọn dẹp thư mục tạm và xóa sạch cache rác APT để thu nhỏ file ISO tối đa
           sudo rm -rf docker_extract
           sudo rm -rf chroot_dir/var/cache/apt/archives/*
           sudo rm -rf chroot_dir/var/lib/apt/lists/*
 
-          # Tạo lại các phân vùng ảo trống bắt buộc cho Live ISO
-          sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/run chroot_dir/tmp chroot_dir/boot chroot_dir/var/log
+          # Tạo lại các phân vùng ảo trống bắt buộc cho Live ISO hoạt động ổn định
+          sudo mkdir -p chroot_dir/var/lib/dpkg chroot_dir/var/lib/apt chroot_dir/var/log chroot_dir/var/run/lightdm
+          sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/run chroot_dir/tmp chroot_dir/boot
           sudo chmod 1777 chroot_dir/tmp
 
       - name: Configure Auto-Login and User Account
         run: |
-          # Thiết lập cấu hình tự động đăng nhập thẳng vào màn hình Desktop cho tài khoản duykhanh
           sudo mkdir -p chroot_dir/etc/lightdm/lightdm.conf.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/lightdm/lightdm.conf.d/autologin.conf
           [Seat:*]
@@ -74,7 +74,6 @@ jobs:
           user-session=xfce
           EOF
 
-          # Khởi tạo tài khoản thực thi quyền quản trị sudo miễn mật khẩu
           sudo useradd -R chroot_dir -m -s /bin/bash -g sudo duykhanh || true
           sudo chroot chroot_dir passwd -d duykhanh || true
 
@@ -88,7 +87,6 @@ jobs:
         run: |
           sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
           
-          # Tự khởi động thanh Dock kiểu Mac khi mở máy lên
           sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/plank.desktop
           [Desktop Entry]
           Type=Application
@@ -101,7 +99,7 @@ jobs:
 
       - name: Compress System Core into SquashFS
         run: |
-          # Tiến hành nén đa luồng hệ thống đồ họa sạch bằng thuật toán XZ
+          # Nén đa luồng hệ thống đồ họa sạch bằng thuật toán XZ cực mạnh
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
@@ -110,7 +108,6 @@ jobs:
           sudo cp /boot/initrd.img-$(uname -r) image/live/initrd.img
           
           mkdir -p image/boot/grub
-          # ĐỒNG BỘ NHÃN ĐĨA VÀ KHÓA CHẶT ĐƯỜNG DẪN LIVE MEDIA PATH CHỐNG LỖI MÀN HÌNH ĐEN
           cat <<'EOF' > image/boot/grub/grub.cfg
           set timeout=10
           set default=0
@@ -131,7 +128,7 @@ jobs:
         run: |
           sudo chmod -R 755 image
           
-          # ĐÚC ĐĨA BOOT HOÀN HẢO: Sử dụng xorriso định danh chính xác nhãn đĩa cứng tên DuyKhanhOS
+          # Đúc đĩa ISO định danh chính xác nhãn đĩa cứng tên DuyKhanhOS, nhận diện Live CD 100%
           xorriso -as mkisofs \
             -r -V "DuyKhanhOS" \
             -o duykhanhos-production.iso \

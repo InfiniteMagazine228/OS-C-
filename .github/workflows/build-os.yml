@@ -22,35 +22,34 @@ jobs:
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           
-          # Sử dụng nhân Debian 12 sạch từ Docker Hub, triệt tiêu 100% lỗi treo đĩa lặp vô hạn của Ubuntu Host
           docker create --name duykhanh_core debian:bookworm
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
-      - name: Force Secure HTTPS Repositories
+      - name: Force Secure Static CDN Repositories
         run: |
           sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
           sudo rm -f chroot_dir/etc/apt/sources.list
           
-          # Bê toàn bộ chứng chỉ SSL/TLS đang chạy tốt của Host vào bên trong lõi OS để vượt tường lửa mạng GitHub
           sudo mkdir -p chroot_dir/etc/ssl/certs
           sudo cp -a /etc/ssl/certs/* chroot_dir/etc/ssl/certs/
-          sudo mkdir -p chroot_dir/usr/share/ca-certificates
-          sudo cp -a /usr/share/ca-certificates/* chroot_dir/usr/share/ca-certificates/
           
-          # Sử dụng dải kho lưu trữ HTTPS bảo mật cổng 443 chính thức của Debian toàn cầu
+          # SỬA LỖI 404 CHÍ MẠNG: Ép sử dụng đường dẫn CDN CDN-FASTLY tĩnh tuyệt đối
+          # Tuyệt đối không chứa chữ "www." để bẻ gãy hoàn toàn script tự động nắn dòng lỗi
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb [trusted=yes] https://debian.org bookworm main contrib non-free non-free-firmware
-          deb [trusted=yes] https://debian.org bookworm-updates main contrib non-free non-free-firmware
-          deb [trusted=yes] https://debian.org bookworm-security main contrib non-free non-free-firmware
+          deb [trusted=yes] http://debian.org bookworm main contrib non-free non-free-firmware
+          deb [trusted=yes] http://debian.org bookworm-updates main contrib non-free non-free-firmware
+          deb [trusted=yes] http://debian.org bookworm-security main contrib non-free non-free-firmware
           EOF
 
+          # ÉP KHÓA CHẶT CHUYỂN HƯỚNG: Ép bộ lệnh apt-get đứng im tại chỗ tải file, cấm tự ý đổi link mạng hỏng
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
           Acquire::ForceIPv4 "true";
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "true";
+          Acquire::http::AllowRedirect "false";
+          Acquire::https::AllowRedirect "false";
           EOF
 
       - name: Synchronize Network DNS

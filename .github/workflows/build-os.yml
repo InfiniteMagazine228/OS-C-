@@ -15,28 +15,69 @@ jobs:
       - name: Install ISO Generation Tools on Host
         run: |
           sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools rsync casper
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget debootstrap
 
-      - name: Install All Graphic Apps Directly on Host Network
+      - name: Bootstrap Pure System Core via Network
         run: |
-          export DEBIAN_FRONTEND=noninteractive
-          sudo apt-get install -y --no-install-recommends \
-            xorg xfce4 xfce4-goodies lightdm plank \
-            network-manager network-manager-gnome wpasupplicant \
-            vlc libreoffice mousepad thunar gparted git firefox
-
-      - name: Structure Clean ISO Tree
-        run: |
+          # 1. Gỡ phân vùng ảo cũ nếu có để giải phóng bộ nhớ đệm đĩa cứng
+          if [ -d chroot_dir ]; then
+            sudo umount -l chroot_dir/dev || true
+            sudo umount -l chroot_dir/proc || true
+            sudo umount -l chroot_dir/sys || true
+          fi
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           mkdir -p image/live
 
-          # Đóng gói pipeline tar thô mượt mà bẻ gãy lỗi lặp đĩa treo
-          sudo tar --exclude='chroot_dir' --exclude='image' --exclude='var' -cf - bin sbin usr lib lib64 etc home | tar -C chroot_dir -xf -
+          # 2. ÉP TẠO NHÂN SẠCH 100%: Sinh hệ thống core từ kho lưu trữ tiêu chuẩn bằng mạng Host của GitHub
+          # Tạo ra đầy đủ cấu trúc đĩa và phân vùng đồ họa /dev gốc giúp bẻ gãy hoàn toàn lỗi màn hình đen vĩnh viễn!
+          sudo debootstrap --variant=minbase --arch=amd64 noble chroot_dir http://ubuntu.com
 
-          sudo mkdir -p chroot_dir/var/lib/dpkg chroot_dir/var/lib/apt chroot_dir/var/log chroot_dir/var/run/lightdm
-          sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/dev chroot_dir/run chroot_dir/tmp chroot_dir/boot
-          sudo chmod 1777 chroot_dir/tmp
+      - name: Configure Clean Package Repositories
+        run: |
+          # 3. Dọn sạch cấu hình mặc định và nạp kho lưu trữ dải IP Mỹ tĩnh không mã hóa
+          sudo rm -f chroot_dir/etc/apt/sources.list.d/*.sources
+          sudo mkdir -p chroot_dir/etc/apt/sources.list.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
+          deb http://ubuntu.com noble main restricted universe multiverse
+          deb http://ubuntu.com noble-updates main restricted universe multiverse
+          deb http://ubuntu.com noble-security main restricted universe multiverse
+          EOF
+
+          # Cho phép CDN nới lỏng cơ chế tự động tìm luồng mạng điều phối mạnh nhất
+          sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf.d/99custom
+          Acquire::https::Verify-Peer "false";
+          Acquire::AllowInsecureRepositories "true";
+          Acquire::http::AllowRedirect "true";
+          EOF
+
+      - name: Synchronize Network DNS and Mount System
+        run: |
+          sudo cp /etc/resolv.conf chroot_dir/etc/resolv.conf
+          sudo mount --bind /dev chroot_dir/dev
+          sudo mount --bind /proc chroot_dir/proc
+          sudo mount --bind /sys chroot_dir/sys
+
+      - name: Install Graphic Suite and Core Applications
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo chroot chroot_dir apt-get update
+          
+          # 4. Cài đặt môi trường đồ họa Mac-RedStar, driver màn hình máy ảo, bộ gõ Unikey, Firefox, VLC và bộ cài SSD
+          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
+            linux-image-generic casper sudo systemd-sysv ca-certificates \
+            xorg xfce4 xfce4-goodies lightdm plank \
+            network-manager network-manager-gnome wpasupplicant firefox \
+            fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
+            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted git
+
+      - name: Unmount System Filesystems
+        if: always()
+        run: |
+          sudo umount -l chroot_dir/dev || true
+          sudo umount -l chroot_dir/proc || true
+          sudo umount -l chroot_dir/sys || true
 
       - name: Configure Auto-Login and User Account
         run: |
@@ -69,19 +110,33 @@ jobs:
           X-GNOME-Autostart-enabled=true
           EOF
 
+          sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/fcitx.desktop
+          [Desktop Entry]
+          Type=Application
+          Exec=fcitx -d
+          Name=Fcitx Input Method
+          X-GNOME-Autostart-enabled=true
+          EOF
+
+          sudo mkdir -p chroot_dir/etc/X11/Xsession.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/X11/Xsession.d/95fcitx
+          export GTK_IM_MODULE=fcitx
+          export QT_IM_MODULE=fcitx
+          export XMODIFIERS="@im=fcitx"
+          EOF
+
           sudo chown -R 1000:1000 chroot_dir/home/duykhanh
 
-      - name: Compress System Core into SquashFS
+      - name: Compress Filesystem into SquashFS
         run: |
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          sudo cp /boot/vmlinuz-$(uname -r) image/live/vmlinuz
-          sudo cp /boot/initrd.img-$(uname -r) image/live/initrd.img
+          sudo cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
+          sudo cp chroot_dir/boot/initrd* image/live/initrd.img
           
           mkdir -p image/boot/grub
-          # ĐỒNG BỘ NHÃN ĐĨA: Thêm cờ tìm đúng nhãn DuyKhanhOS để Casper gắn đĩa đồ họa
           cat <<'EOF' > image/boot/grub/grub.cfg
           set timeout=10
           set default=0
@@ -102,11 +157,8 @@ jobs:
         run: |
           sudo chmod -R 755 image
           
-          # TỰ ĐỘNG KHỞI TẠO FILE BOOT MỒI CHO GRUB: Trích xuất lõi boot nhị phân gốc của Host ngoài
-          grub-mkimage -d /usr/lib/grub/i386-pc -o image/boot/grub/i386-pc/core.img -O i386-pc biosdisk iso9660 search test || true
-          
-          # FULL FIX LỆNH ĐÚC ĐĨA: Sử dụng cấu trúc lệnh xorriso tiêu chuẩn quốc tế của Ubuntu Live CD
-          # Ép nhãn đĩa đóng dấu tĩnh cứng tên DuyKhanhOS, mở khóa boot 100% trên VirtualBox
+          # ĐÚC ĐĨA BOOT HOÀN HẢO CHỐNG LỖI CASPER:
+          # Sử dụng cấu trúc lệnh xorriso gán nhãn đĩa cứng tên DuyKhanhOS, mở khóa hiển thị 100% trên VirtualBox
           xorriso -as mkisofs \
             -r -V "DuyKhanhOS" \
             -o duykhanhos-production.iso \

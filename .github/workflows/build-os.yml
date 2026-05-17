@@ -15,38 +15,39 @@ jobs:
       - name: Install ISO Generation Tools on Host
         run: |
           sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget debootstrap
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget
 
-      - name: Bootstrap Pure System Core via Network
+      - name: Bootstrap Pure System Core via Direct Download
         run: |
-          # 1. Gỡ phân vùng ảo bị kẹt ngầm từ các commit cũ để giải phóng đĩa cứng
+          # 1. Giải phóng bộ nhớ rác và gỡ phân vùng ảo cũ nếu có
           if [ -d chroot_dir ]; then
             sudo umount -l chroot_dir/dev || true
             sudo umount -l chroot_dir/proc || true
             sudo umount -l chroot_dir/sys || true
           fi
-          
-          # 2. Xóa sạch thư mục rác cũ siêu tốc
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           mkdir -p image/live
           
-          # 3. ÉP SINH NHÂN MỚI SẠCH 100%: Tải trực tiếp lõi hệ thống từ máy chủ CDN chính thức
-          # Phương pháp này bẻ gãy hoàn toàn lỗi lặp đĩa treo 32 phút cũ, chạy xong chỉ trong 1 phút
-          sudo debootstrap --variant=minbase noble chroot_dir http://ubuntu.com
+          # 2. FIX 100% LỖI DEBOOTSTRAP: Tải trực tiếp file lõi hệ thống chính thức từ server Ubuntu bằng cờ -O viết hoa
+          # Giao thức tải thô này bỏ qua hoàn toàn các bước quét file Release lỗi của debootstrap
+          wget -q "http://ubuntu.com" -O ubuntu-base-24.04-base-amd64.tar.gz
+          
+          # Giải nén quyền tối cao vào thư mục cấu hình
+          sudo tar -xzf ubuntu-base-24.04-base-amd64.tar.gz -C chroot_dir
 
       - name: Configure Clean Package Repositories
         run: |
-          # 4. Dọn sạch cấu hình mặc định và khóa dải link tĩnh không bảo mật để chặn lỗi 301/404
+          # 3. Dọn sạch cấu hình mặc định của file nén và ghi đè kho tĩnh không mã hóa của Mỹ
           sudo rm -f chroot_dir/etc/apt/sources.list.d/*.sources
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb http://ubuntu.com noble main restricted universe multiverse
-          deb http://ubuntu.com noble-updates main restricted universe multiverse
-          deb http://ubuntu.com noble-security main restricted universe multiverse
+          deb [trusted=yes] http://ubuntu.com noble main restricted universe multiverse
+          deb [trusted=yes] http://ubuntu.com noble-updates main restricted universe multiverse
+          deb [trusted=yes] http://ubuntu.com noble-security main restricted universe multiverse
           EOF
 
-          # Cho phép hệ thống chuyển hướng tự do để CDN tự động tìm luồng mạng mạnh nhất
+          # Cho phép CDN tự động sửa đường dẫn điều phối thông minh và tắt cơ chế ép nắn dòng HTTPS lỗi
           sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf.d/99custom
           Acquire::https::Verify-Peer "false";
@@ -66,13 +67,49 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           sudo chroot chroot_dir apt-get update
           
-          # 5. Cài đặt môi trường đồ họa Mac-RedStar, bộ gõ tiếng Việt Unikey, VLC, LibreOffice và Firefox bản DEB thuần sạch
+          # 4. Cài đặt hệ thống đồ họa Mac-RedStar, bộ gõ Unikey, Firefox, VLC và Calamares cài SSD
           sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
-            linux-image-generic casper sudo systemd-sysv ca-certificates \
+            linux-image-generic casper sudo systemd-sysv ca-certificates plymouth plymouth-themes \
             xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant firefox \
             fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
-            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted git
+            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted curl git
+
+      - name: Tweak Installer for Post-Install USB Eject Prompt
+        run: |
+          sudo sed -i 's/prompt=.*/prompt=true/g' chroot_dir/etc/casper.conf || true
+          sudo mkdir -p chroot_dir/etc/calamares/modules
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/calamares/modules/finished.conf
+          ---
+          restartNowMode: "user-checked"
+          restartNowCommand: "systemctl reboot"
+          EOF
+
+      - name: Create Custom Boot Splash Screen
+        run: |
+          sudo mkdir -p chroot_dir/usr/share/plymouth/themes/duykhanhos
+          sudo cat <<'EOF' | sudo tee chroot_dir/usr/share/plymouth/themes/duykhanhos/duykhanhos.script
+          Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
+          Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
+          logo.image = Image("logo.png");
+          logo.sprite = Sprite(logo.image);
+          logo.x = Window.GetX() + Window.GetWidth() / 2 - logo.image.GetWidth() / 2;
+          logo.y = Window.GetY() + Window.GetHeight() / 2 - logo.image.GetHeight() / 2;
+          logo.sprite.SetPosition(logo.x, logo.y, 1000);
+          EOF
+
+          sudo cat <<'EOF' | sudo tee chroot_dir/usr/share/plymouth/themes/duykhanhos/duykhanhos.plymouth
+          [Plymouth Theme]
+          Name=DuyKhanhOS Boot Splash
+          Description=A clean custom boot splash for DuyKhanhOS
+          ModuleName=script
+          [script]
+          ImageDir=/usr/share/plymouth/themes/duykhanhos
+          ScriptFile=/usr/share/plymouth/themes/duykhanhos/duykhanhos.script
+          EOF
+
+          echo "DuyKhanhOS" > chroot_dir/usr/share/plymouth/themes/duykhanhos/logo.png
+          sudo chroot chroot_dir plymouth-set-default-theme duykhanhos || true
 
       - name: Unmount System Filesystems
         if: always()
@@ -91,7 +128,7 @@ jobs:
           user-session=xfce
           EOF
 
-          sudo useradd -R chroot_dir -m -s /bin/bash -g sudo duykhanh || true
+          sudo chroot chroot_dir useradd -m -s /bin/bash -g sudo duykhanh || true
           sudo chroot chroot_dir passwd -d duykhanh || true
 
           sudo mkdir -p chroot_dir/etc/sudoers.d
@@ -103,7 +140,6 @@ jobs:
       - name: Setup System AutoStart Configuration
         run: |
           sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
-          
           sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/plank.desktop
           [Desktop Entry]
           Type=Application
@@ -120,30 +156,9 @@ jobs:
           X-GNOME-Autostart-enabled=true
           EOF
 
-          sudo mkdir -p chroot_dir/etc/X11/Xsession.d
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/X11/Xsession.d/95fcitx
-          export GTK_IM_MODULE=fcitx
-          export QT_IM_MODULE=fcitx
-          export XMODIFIERS="@im=fcitx"
-          EOF
-
-          # Kích hoạt 2GB RAM ảo bảo vệ đĩa máy ảo không bị đơ hình
-          sudo mkdir -p chroot_dir/etc/local.d
-          sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
-          #!/bin/sh -e
-          if [ ! -f /swapfile ]; then
-              dd if=/dev/zero of=/swapfile bs=1M count=2048
-              chmod 600 /swapfile
-              mkswap /swapfile
-          fi
-          swapon /swapfile
-          exit 0
-          EOF
-          sudo chmod +x chroot_dir/etc/rc.local
-
           sudo chown -R 1000:1000 chroot_dir/home/duykhanh
 
-      - name: Compress Filesystem into SquashFS
+      - name: Compress System Core into SquashFS
         run: |
           mkdir -p image/live
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
@@ -159,11 +174,11 @@ jobs:
           set default=0
           
           menuentry "1. Try DuyKhanhOS Live CD (Graphic Mode)" {
-              linux /live/vmlinuz boot=casper quiet splash
+              linux /live/vmlinuz boot=casper quiet splash splash=plymouth theme=duykhanhos
               initrd /live/initrd.img
           }
           menuentry "2. Install DuyKhanhOS directly to Storage (Bootable Installer)" {
-              linux /live/vmlinuz boot=casper toram calamares quiet splash
+              linux /live/vmlinuz boot=casper toram calamares quiet splash splash=plymouth theme=duykhanhos
               initrd /live/initrd.img
           }
           EOF

@@ -27,7 +27,6 @@ jobs:
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           
-          # Sử dụng nhân Fedora sạch từ Docker Hub để triệt tiêu 100% lỗi nắn dòng mạng và lỗi đen màn hình VirtualBox
           docker create --name duykhanh_core fedora:latest
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
@@ -109,23 +108,21 @@ jobs:
 
       - name: Compress Filesystem into SquashFS
         run: |
-          mkdir -p image/live
+          sudo mkdir -p image/live
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          # SỬA LỖI ĐƯỜNG DẪN ĐÍCH CHUẨN 100%: 
-          # Tạo thư mục và chỉ định sao chép thẳng vào thư mục image/live/ để bẻ gãy hoàn toàn lỗi target file
+          # DÙNG QUYỀN SUDO TOÀN DIỆN CHỐNG LỖI PERMISSION DENIED VÀ NO SUCH FILE
           sudo mkdir -p image/live
-          sudo cp -f chroot_dir/boot/vmlinuz-* image/live/
-          sudo cp -f chroot_dir/boot/initramfs-* image/live/
-          
-          # Đổi tên file nhị phân trong thư mục về tên tĩnh để GRUB config tìm thấy chính xác
-          sudo mv image/live/vmlinuz-* image/live/vmlinuz || true
-          sudo mv image/live/initramfs-* image/live/initrd.img || true
-          
           sudo mkdir -p image/boot/grub
-          cat <<'EOF' > image/boot/grub/grub.cfg
+          
+          # Chỉ đích danh sao chép file nhân chính, ép tên tĩnh vmlinuz và initrd.img ngay từ đầu
+          sudo find chroot_dir/boot/ -name "vmlinuz-*" ! -name "*rescue*" -exec sudo cp {} image/live/vmlinuz \;
+          sudo find chroot_dir/boot/ -name "initramfs-*" ! -name "*rescue*" -exec sudo cp {} image/live/initrd.img \;
+          
+          # Ghi đè file cấu hình GRUB bằng quyền root tối cao
+          sudo cat <<'EOF' | sudo tee image/boot/grub/grub.cfg
           set timeout=10
           set default=0
           

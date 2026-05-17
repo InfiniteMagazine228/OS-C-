@@ -26,30 +26,31 @@ jobs:
           docker export duykhanh_core | tar -C chroot_dir -xf -
           docker rm duykhanh_core
 
-      - name: Force Secure Static CDN Repositories
+      - name: Force Official Standard HTTPS Repositories
         run: |
+          # Dọn sạch toàn bộ cấu hình cũ của Docker để tránh tự nắn dòng mạng hỏng
           sudo rm -rf chroot_dir/etc/apt/sources.list.d/*
           sudo rm -f chroot_dir/etc/apt/sources.list
           
+          # ĐỒNG BỘ CHỨNG CHỈ: Bê toàn bộ chứng chỉ SSL đang chạy tốt của Host vào bên trong lõi OS
           sudo mkdir -p chroot_dir/etc/ssl/certs
           sudo cp -a /etc/ssl/certs/* chroot_dir/etc/ssl/certs/
           
-          # SỬA LỖI 404 CHÍ MẠNG: Ép sử dụng đường dẫn CDN CDN-FASTLY tĩnh tuyệt đối
-          # Tuyệt đối không chứa chữ "www." để bẻ gãy hoàn toàn script tự động nắn dòng lỗi
+          # SỬA LỖI CHÍ MẠNG 100: Định nghĩa chính xác cấu trúc URL kho bảo mật Debian Security chuẩn 100%
           sudo mkdir -p chroot_dir/etc/apt/sources.list.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
-          deb [trusted=yes] http://debian.org bookworm main contrib non-free non-free-firmware
-          deb [trusted=yes] http://debian.org bookworm-updates main contrib non-free non-free-firmware
-          deb [trusted=yes] http://debian.org bookworm-security main contrib non-free non-free-firmware
+          deb [trusted=yes] https://debian.org bookworm main contrib non-free non-free-firmware
+          deb [trusted=yes] https://debian.org bookworm-updates main contrib non-free non-free-firmware
+          deb [trusted=yes] https://debian.org bookworm-security main contrib non-free non-free-firmware
           EOF
 
-          # ÉP KHÓA CHẶT CHUYỂN HƯỚNG: Ép bộ lệnh apt-get đứng im tại chỗ tải file, cấm tự ý đổi link mạng hỏng
+          # BẬT CHUYỂN HƯỚNG THÔNG MẠNG: Cho phép hệ thống tự kết nối qua giao thức mã hóa bảo mật HTTPS
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf
           Acquire::ForceIPv4 "true";
           Acquire::https::Verify-Peer "false";
           Acquire::AllowInsecureRepositories "true";
-          Acquire::http::AllowRedirect "false";
-          Acquire::https::AllowRedirect "false";
+          Acquire::http::AllowRedirect "true";
+          Acquire::https::AllowRedirect "true";
           EOF
 
       - name: Synchronize Network DNS

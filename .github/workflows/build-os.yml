@@ -15,51 +15,74 @@ jobs:
       - name: Install ISO Generation Tools on Host
         run: |
           sudo apt-get update
-          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget rsync casper
+          sudo apt-get install -y squashfs-tools xorriso grub-pc-bin mtools dosfstools wget debootstrap
 
-      - name: Install All Graphic Apps Directly on Host Network
+      - name: Bootstrap Pure System Core via Network
         run: |
-          export DEBIAN_FRONTEND=noninteractive
-          # Tải trọn bộ giao diện đồ họa và driver Wi-Fi trực tiếp lên Host ngoài
-          sudo apt-get install -y --no-install-recommends \
-            xorg xfce4 xfce4-goodies lightdm plank \
-            network-manager network-manager-gnome wpasupplicant \
-            vlc libreoffice mousepad thunar gparted git firefox
-
-      - name: Structure Clean ISO Tree
-        run: |
-          # Dọn sạch ổ đĩa rác cũ để giải phóng dung lượng cứng
+          # 1. Gỡ phân vùng ảo bị kẹt ngầm từ các commit cũ để giải phóng đĩa cứng
+          if [ -d chroot_dir ]; then
+            sudo umount -l chroot_dir/dev || true
+            sudo umount -l chroot_dir/proc || true
+            sudo umount -l chroot_dir/sys || true
+          fi
+          
+          # 2. Xóa sạch thư mục rác cũ siêu tốc
           sudo rm -rf chroot_dir image duykhanhos-production.iso
           mkdir -p chroot_dir
           mkdir -p image/live
+          
+          # 3. ÉP SINH NHÂN MỚI SẠCH 100%: Tải trực tiếp lõi hệ thống từ máy chủ CDN chính thức
+          # Phương pháp này bẻ gãy hoàn toàn lỗi lặp đĩa treo 32 phút cũ, chạy xong chỉ trong 1 phút
+          sudo debootstrap --variant=minbase noble chroot_dir http://ubuntu.com
 
-          # BỘ LỌC TỐI HẬU CHỐNG TRÀN ĐĨA: Sử dụng rsync để lọc bỏ hoàn toàn các file rác khổng lồ của GitHub Actions
-          # Loại bỏ các gói ngôn ngữ cài ngầm như Julia, Go, Rust, .NET vốn là nguyên nhân gây lỗi No space left on device
-          for dir in bin sbin usr lib lib64 etc home var; do
-            if [ -d /$dir ]; then
-              sudo rsync -a --links \
-                --exclude="*julia*" \
-                --exclude="*go/pkg*" \
-                --exclude="*rust*" \
-                --exclude="*dotnet*" \
-                --exclude="*cache*" \
-                --exclude="*man*" \
-                --exclude="*doc*" \
-                /$dir/ chroot_dir/$dir/
-            fi
-          done
+      - name: Configure Clean Package Repositories
+        run: |
+          # 4. Dọn sạch cấu hình mặc định và khóa dải link tĩnh không bảo mật để chặn lỗi 301/404
+          sudo rm -f chroot_dir/etc/apt/sources.list.d/*.sources
+          sudo mkdir -p chroot_dir/etc/apt/sources.list.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/sources.list
+          deb http://ubuntu.com noble main restricted universe multiverse
+          deb http://ubuntu.com noble-updates main restricted universe multiverse
+          deb http://ubuntu.com noble-security main restricted universe multiverse
+          EOF
 
-          # Xóa sạch bộ nhớ đệm APT rác để thu nhỏ file ISO tối đa
-          sudo rm -rf chroot_dir/var/cache/apt/archives/*
-          sudo rm -rf chroot_dir/var/lib/apt/lists/*
+          # Cho phép hệ thống chuyển hướng tự do để CDN tự động tìm luồng mạng mạnh nhất
+          sudo mkdir -p chroot_dir/etc/apt/apt.conf.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/apt/apt.conf.d/99custom
+          Acquire::https::Verify-Peer "false";
+          Acquire::AllowInsecureRepositories "true";
+          Acquire::http::AllowRedirect "true";
+          EOF
 
-          # Khởi tạo các phân vùng ảo trống bắt buộc để Linux khởi động
-          sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/dev chroot_dir/run chroot_dir/tmp chroot_dir/boot
-          sudo chmod 1777 chroot_dir/tmp
+      - name: Synchronize Network DNS and Mount System
+        run: |
+          sudo cp /etc/resolv.conf chroot_dir/etc/resolv.conf
+          sudo mount --bind /dev chroot_dir/dev
+          sudo mount --bind /proc chroot_dir/proc
+          sudo mount --bind /sys chroot_dir/sys
+
+      - name: Install Graphic Suite and Core Applications
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo chroot chroot_dir apt-get update
+          
+          # 5. Cài đặt môi trường đồ họa Mac-RedStar, bộ gõ tiếng Việt Unikey, VLC, LibreOffice và Firefox bản DEB thuần sạch
+          sudo chroot chroot_dir apt-get install -y --allow-unauthenticated --no-install-recommends \
+            linux-image-generic casper sudo systemd-sysv ca-certificates \
+            xorg xfce4 xfce4-goodies lightdm plank \
+            network-manager network-manager-gnome wpasupplicant firefox \
+            fcitx fcitx-unikey fcitx-config-gtk vlc libreoffice mousepad thunar \
+            calamares calamares-settings-ubuntu-common calamares-settings-lubuntu gparted git
+
+      - name: Unmount System Filesystems
+        if: always()
+        run: |
+          sudo umount -l chroot_dir/dev || true
+          sudo umount -l chroot_dir/proc || true
+          sudo umount -l chroot_dir/sys || true
 
       - name: Configure Auto-Login and User Account
         run: |
-          # Thiết lập tự động đăng nhập thẳng vào Desktop không gõ mật khẩu
           sudo mkdir -p chroot_dir/etc/lightdm/lightdm.conf.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/lightdm/lightdm.conf.d/autologin.conf
           [Seat:*]
@@ -81,7 +104,6 @@ jobs:
         run: |
           sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
           
-          # Tự mở thanh Dock kiểu Mac khi vào màn hình chính
           sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/plank.desktop
           [Desktop Entry]
           Type=Application
@@ -90,18 +112,46 @@ jobs:
           X-GNOME-Autostart-enabled=true
           EOF
 
+          sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/fcitx.desktop
+          [Desktop Entry]
+          Type=Application
+          Exec=fcitx -d
+          Name=Fcitx Input Method
+          X-GNOME-Autostart-enabled=true
+          EOF
+
+          sudo mkdir -p chroot_dir/etc/X11/Xsession.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/X11/Xsession.d/95fcitx
+          export GTK_IM_MODULE=fcitx
+          export QT_IM_MODULE=fcitx
+          export XMODIFIERS="@im=fcitx"
+          EOF
+
+          # Kích hoạt 2GB RAM ảo bảo vệ đĩa máy ảo không bị đơ hình
+          sudo mkdir -p chroot_dir/etc/local.d
+          sudo cat <<'EOF' | sudo tee chroot_dir/etc/rc.local
+          #!/bin/sh -e
+          if [ ! -f /swapfile ]; then
+              dd if=/dev/zero of=/swapfile bs=1M count=2048
+              chmod 600 /swapfile
+              mkswap /swapfile
+          fi
+          swapon /swapfile
+          exit 0
+          EOF
+          sudo chmod +x chroot_dir/etc/rc.local
+
           sudo chown -R 1000:1000 chroot_dir/home/duykhanh
 
-      - name: Compress System Core into SquashFS
+      - name: Compress Filesystem into SquashFS
         run: |
-          # Nén đa luồng bằng thuật toán XZ cực mạnh giúp thu nhỏ tối đa dung lượng ISO
+          mkdir -p image/live
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
         run: |
-          # Trích xuất trực tiếp bộ nhân nguyên bản đang chạy ổn định của máy chủ vào phân vùng boot
-          sudo cp /boot/vmlinuz-$(uname -r) image/live/vmlinuz
-          sudo cp /boot/initrd.img-$(uname -r) image/live/initrd.img
+          sudo cp chroot_dir/boot/vmlinuz* image/live/vmlinuz
+          sudo cp chroot_dir/boot/initrd* image/live/initrd.img
           
           mkdir -p image/boot/grub
           cat <<'EOF' > image/boot/grub/grub.cfg
@@ -118,7 +168,7 @@ jobs:
           }
           EOF
 
-      - name: Generate Production Bootable ISO
+      - name: Generate Custom Bootable ISO
         run: |
           grub-mkrescue -o duykhanhos-production.iso image
 

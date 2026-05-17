@@ -31,7 +31,21 @@ jobs:
       run: |
         sudo unsquashfs -d env/filesystem env/iso_new/casper/filesystem.squashfs
 
-    - name: Tùy biến hệ thống chuyên sâu (Swap, Plymouth, Calamares, Wifi)
+    - name: Tải trước Giao diện và Icon (Tránh rác phát sinh trong chroot)
+      run: |
+        mkdir -p themes icons
+        git clone https://github.com themes/WhiteSur
+        git clone https://github.com icons/WhiteSur-Icons
+        
+        # Tạo sẵn cấu trúc thư mục đích trong OS tùy biến
+        sudo mkdir -p env/filesystem/usr/share/themes env/filesystem/usr/share/icons
+        sudo mkdir -p env/filesystem/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
+        sudo mkdir -p env/filesystem/etc/skel/Desktop
+        sudo mkdir -p env/filesystem/etc/skel/.config/autostart
+        sudo mkdir -p env/filesystem/etc/lightdm/lightdm.conf.d/
+        sudo mkdir -p env/filesystem/etc/calamares/modules
+
+    - name: Tùy biến hệ thống chuyên sâu (Sửa lỗi cài đặt Calamares)
       run: |
         sudo mount --bind /dev env/filesystem/dev
         sudo mount --bind /dev/pts env/filesystem/dev/pts
@@ -43,36 +57,26 @@ jobs:
         export DEBIAN_FRONTEND=noninteractive
         apt-get update
         
-        # 1. CÀI ĐẶT TRÌNH CÀI ĐẶT CALAMARES TO SSD & CÁC ỨNG DỤNG ĐI KÈM
-        apt-get install -y calamares calamares-settings-ubuntu network-manager network-manager-gnome nm-tray
+        # Ép buộc ghi đè khi cài đặt cấu hình Calamares Ubuntu để tránh lỗi trùng lặp
+        apt-get install -y -o Dpkg::Options::="--force-overwrite" calamares calamares-settings-ubuntu
+        
+        # Cài đặt các ứng dụng cần thiết
+        apt-get install -y network-manager network-manager-gnome nm-tray
         apt-get install -y bluez bluez-tools pulseaudio bluetooth
         apt-get install -y firefox vlc libreoffice mousepad git xfce4 xfce4-goodies plank
         
-        # Tạo shortcut cho trình cài đặt Calamares ngoài Desktop
-        mkdir -p /etc/skel/Desktop
-        cat << 'INNER_EOF' > /etc/skel/Desktop/calamares.desktop
-        [Desktop Entry]
-        Type=Application
-        Version=1.0
-        Name=Cài Đặt DuyKhanhOS To SSD
-        Comment=Cài đặt vĩnh viễn hệ điều hành vào bộ nhớ máy tính
-        Exec=sudo calamares
-        Icon=install
-        Terminal=false
-        Categories=System;
-        INNER_EOF
-        chmod +x /etc/skel/Desktop/calamares.desktop
-
-        # Tự động tạo thông báo nhắc rút USB khi cài đặt hoàn tất thành công thông qua Calamares
-        mkdir -p /etc/calamares/modules
-        cat << 'INNER_EOF' > /etc/calamares/modules/finished.conf
-        ---
-        restartNowEnabled: true
-        restartNowChecked: true
-        rebootCommand: "systemctl reboot"
-        INNER_EOF
+        # Cài đặt bộ gõ tiếng Việt Fcitx-Unikey
+        apt-get install -y fcitx fcitx-unikey fcitx-config-gtk
+        echo "export GTK_IM_MODULE=fcitx" >> /etc/profile
+        echo "export QT_IM_MODULE=fcitx" >> /etc/profile
+        echo "export XMODIFIERS=@im=fcitx" >> /etc/profile
         
-        # 2. CẤU HÌNH HIỆU NĂNG SIÊU TỐC: TỰ ĐỘNG TẠO SWAP ẢO 2GB KHI BOOT
+        # Đổi màn hình khởi động Plymouth thành chữ DuyKhanhOS
+        apt-get install -y plymouth-themes
+        sed -i 's/text/DuyKhanhOS/g' /usr/share/plymouth/themes/ubuntu-text/ubuntu-text.plymouth || true
+        update-initramfs -u -k all
+        
+        # Cấu hình Swap ảo tự động 2GB khi Boot phục vụ máy cấu hình yếu
         cat << 'INNER_EOF' > /etc/init.d/setup-swap
         #!/bin/bash
         if [ ! -f /swapfile ]; then
@@ -84,88 +88,56 @@ jobs:
         INNER_EOF
         chmod +x /etc/init.d/setup-swap
         update-rc.d setup-swap defaults
-
-        # 3. THAY ĐỔI MÀN HÌNH KHỞI ĐỘNG PLYMOUTH CÓ CHỮ DUYKHANHOS
-        apt-get install -y plymouth-themes
-        # Chỉnh sửa cấu hình hiển thị text của Plymouth mặc định sang tên bạn
-        sed -i 's/text/DuyKhanhOS/g' /usr/share/plymouth/themes/ubuntu-text/ubuntu-text.plymouth || true
-        update-initramfs -u -k all
         
-        # 4. CÀI ĐẶT BỘ GÕ TIẾNG VIỆT FCITX-UNIKEY
-        apt-get install -y fcitx fcitx-unikey fcitx-config-gtk
-        echo "export GTK_IM_MODULE=fcitx" >> /etc/profile
-        echo "export QT_IM_MODULE=fcitx" >> /etc/profile
-        echo "export XMODIFIERS=@im=fcitx" >> /etc/profile
-        
-        mkdir -p /etc/skel/.config/autostart
-        cat << 'INNER_EOF' > /etc/skel/.config/autostart/fcitx.desktop
-        [Desktop Entry]
-        Type=Application
-        Exec=fcitx -d
-        Hidden=false
-        NoDisplay=false
-        X-GNOME-Autostart-enabled=true
-        Name=Fcitx Input Method
-        INNER_EOF
-        
-        # 5. CẤU HÌNH GIAO DIỆN HIỆN ĐẠI (MAC LAYOUT + PLANK)
-        mkdir -p /usr/share/themes /usr/share/icons
-        git clone https://github.com /tmp/WhiteSur
-        cd /tmp/WhiteSur && ./install.sh -d /usr/share/themes
-        git clone https://github.com /tmp/WhiteSur-Icons
-        cd /tmp/WhiteSur-Icons && ./install.sh -d /usr/share/icons
-        
-        mkdir -p /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
-        echo '<?xml version="1.0" encoding="UTF-8"?><channel name="xsettings" version="1.0"><property name="Net" type="empty"><property name="ThemeName" type="string" value="WhiteSur-Dark"/><property name="IconThemeName" type="string" value="WhiteSur-dark"/></property></channel>' > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
-        
-        cat << 'INNER_EOF' > /etc/skel/.config/autostart/plank.desktop
-        [Desktop Entry]
-        Type=Application
-        Exec=plank
-        Hidden=false
-        NoDisplay=false
-        X-GNOME-Autostart-enabled=true
-        Name=Plank Dock
-        INNER_EOF
-
-        # Tự động kích hoạt khay hệ thống quản lý mạng trực quan nm-tray
-        cat << 'INNER_EOF' > /etc/skel/.config/autostart/nm-tray.desktop
-        [Desktop Entry]
-        Type=Application
-        Exec=nm-tray
-        Hidden=false
-        NoDisplay=false
-        X-GNOME-Autostart-enabled=true
-        Name=Network Tray
-        INNER_EOF
-        
-        # 6. CẤU HÌNH AUTO-LOGIN
-        mkdir -p /etc/lightdm/lightdm.conf.d/
-        cat << 'INNER_EOF' > /etc/lightdm/lightdm.conf.d/custom.conf
-        [Seat:*]
-        autologin-guest=false
-        autologin-user=xubuntu
-        autologin-user-timeout=0
-        INNER_EOF
-        
-        # 7. THAY ĐỔI THƯƠNG HIỆU HỆ THỐNG
+        # Đổi nhận diện tên thương hiệu DuyKhanhOS
         sed -i 's/Xubuntu/DuyKhanhOS/g' /etc/hosts /etc/hostname || true
         echo "DuyKhanhOS Live v1.0" > /etc/issue
         
+        # Dọn dẹp sạch sẽ APT cache
         apt-get clean
         rm -rf /tmp/* ~/.bash_history
         EOF
 
+        # Gỡ mount hệ thống ảo ngay lập tức một cách an toàn
         sudo umount -l env/filesystem/dev/pts || true
         sudo umount -l env/filesystem/dev || true
         sudo umount -l env/filesystem/proc || true
         sudo umount -l env/filesystem/sys || true
 
-    - name: Đóng gói lại hệ thống tệp tin bằng thuật toán XZ đa luồng
+    - name: Chép cấu hình giao diện & Tệp cấu hình vào hệ thống
       run: |
-        sudo rm env/iso_new/casper/filesystem.squashfs
-        sudo rm -rf env/filesystem/tmp/* env/filesystem/root/.bash_history
-        sudo mksquashfs env/filesystem env/iso_new/casper/filesystem.squashfs -comp xz -b 1M -T 0
+        # Chép theme đồ họa vào hệ thống
+        cd themes/WhiteSur && sudo ./install.sh -d ../../env/filesystem/usr/share/themes && cd ../..
+        cd icons/WhiteSur-Icons && sudo ./install.sh -d ../../env/filesystem/usr/share/icons && cd ../..
+        
+        # Tạo tệp cấu hình XFCE Mac layout
+        echo '<?xml version="1.0" encoding="UTF-8"?><channel name="xsettings" version="1.0"><property name="Net" type="empty"><property name="ThemeName" type="string" value="WhiteSur-Dark"/><property name="IconThemeName" type="string" value="WhiteSur-dark"/></property></channel>' | sudo tee env/filesystem/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
+        
+        # Tạo shortcut Calamares ngoài màn hình
+        echo -e "[Desktop Entry]\nType=Application\nVersion=1.0\nName=Cài Đặt DuyKhanhOS To SSD\nComment=Cài đặt vĩnh viễn hệ điều hành vào bộ nhớ máy tính\nExec=sudo calamares\nIcon=install\nTerminal=false\nCategories=System;" | sudo tee env/filesystem/etc/skel/Desktop/calamares.desktop
+        sudo chmod +x env/filesystem/etc/skel/Desktop/calamares.desktop
+
+        # Tự động kích hoạt các ứng dụng nền khi khởi động Live CD
+        echo -e "[Desktop Entry]\nType=Application\nExec=fcitx -d\nHidden=false\nNoDisplay=false\nX-GNOME-Autostart-enabled=true\nName=Fcitx" | sudo tee env/filesystem/etc/skel/.config/autostart/fcitx.desktop
+        echo -e "[Desktop Entry]\nType=Application\nExec=plank\nHidden=false\nNoDisplay=false\nX-GNOME-Autostart-enabled=true\nName=Plank" | sudo tee env/filesystem/etc/skel/.config/autostart/plank.desktop
+        echo -e "[Desktop Entry]\nType=Application\nExec=nm-tray\nHidden=false\nNoDisplay=false\nX-GNOME-Autostart-enabled=true\nName=Network" | sudo tee env/filesystem/etc/skel/.config/autostart/nm-tray.desktop
+        
+        # Tự động thông báo rút USB khi cài xong trên Calamares
+        echo -e "---\nrestartNowEnabled: true\nrestartNowChecked: true\nrebootCommand: \"systemctl reboot\"" | sudo tee env/filesystem/etc/calamares/modules/finished.conf
+        
+        # Cấu hình Auto-Login tự động đăng nhập thẳng vào Desktop không đòi mật khẩu
+        echo -e "[Seat:*]\nautologin-guest=false\navatars-low-res=true\nautologin-user=xubuntu\nautologin-user-timeout=0" | sudo tee env/filesystem/etc/lightdm/lightdm.conf.d/custom.conf
+
+    - name: Đóng gói hệ thống (SỬA LỖI EXIT CODE 32)
+      run: |
+        sudo rm -f env/iso_new/casper/filesystem.squashfs
+        # Dọn sạch các thư mục động có nguy cơ gây kẹt khóa tiến trình (lỗi 32)
+        sudo rm -rf env/filesystem/tmp/* env/filesystem/var/tmp/* env/filesystem/run/* env/filesystem/root/.bash_history
+        
+        # SỬA LỖI 32: Dùng lệnh loại trừ các phân vùng hệ thống ảo thông qua cờ -e và kích hoạt -wildcards
+        sudo mksquashfs env/filesystem env/iso_new/casper/filesystem.squashfs \
+          -comp xz -b 1M -T 0 -fstime now -wildcards \
+          -e "dev/*" -e "proc/*" -e "sys/*" -e "run/*" -e "tmp/*" -e "var/tmp/*"
 
     - name: CẤU HÌNH LIVE CD & BOOTABLE MENU (Hỗ trợ UEFI + BIOS/Legacy)
       run: |
@@ -190,7 +162,7 @@ jobs:
         }
         EOF
 
-    - name: Đóng gói thành file ISO Hybrid Bootable (DuyKhanhOS hoàn chỉnh)
+    - name: Đóng gói thành file ISO Hybrid Bootable
       run: |
         cd env/iso_new
         sudo xorriso -as mkisofs -r -V "DuyKhanhOS" \

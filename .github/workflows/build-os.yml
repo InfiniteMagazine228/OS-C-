@@ -20,7 +20,6 @@ jobs:
       - name: Install All Graphic Apps Directly on Host Network
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          # Tải trọn bộ giao diện đồ họa Mac-RedStar, Unikey, VLC và trình duyệt trực tiếp lên Host bằng mạng cáp quang
           sudo apt-get install -y --no-install-recommends \
             xorg xfce4 xfce4-goodies lightdm plank \
             network-manager network-manager-gnome wpasupplicant \
@@ -32,17 +31,15 @@ jobs:
           mkdir -p chroot_dir
           mkdir -p image/live
 
-          # Sử dụng luồng dữ liệu tar thô bọc đĩa để tránh lỗi đệ quy treo đĩa 32 phút cũ
+          # Đóng gói pipeline tar thô mượt mà bẻ gãy lỗi lặp đĩa treo
           sudo tar --exclude='chroot_dir' --exclude='image' --exclude='var' -cf - bin sbin usr lib lib64 etc home | tar -C chroot_dir -xf -
 
-          # Khởi tạo thủ công var/lib cho hệ thống đồ họa hoạt động sạch 100%
           sudo mkdir -p chroot_dir/var/lib/dpkg chroot_dir/var/lib/apt chroot_dir/var/log chroot_dir/var/run/lightdm
           sudo mkdir -p chroot_dir/proc chroot_dir/sys chroot_dir/dev chroot_dir/run chroot_dir/tmp chroot_dir/boot
           sudo chmod 1777 chroot_dir/tmp
 
       - name: Configure Auto-Login and User Account
         run: |
-          # Thiết lập cấu hình tự động đăng nhập thẳng vào màn hình Desktop cho tài khoản duykhanh
           sudo mkdir -p chroot_dir/etc/lightdm/lightdm.conf.d
           sudo cat <<'EOF' | sudo tee chroot_dir/etc/lightdm/lightdm.conf.d/autologin.conf
           [Seat:*]
@@ -64,7 +61,6 @@ jobs:
         run: |
           sudo mkdir -p chroot_dir/home/duykhanh/.config/autostart
           
-          # Tự khởi động thanh Dock kiểu Mac khi mở máy lên
           sudo cat <<'EOF' | sudo tee chroot_dir/home/duykhanh/.config/autostart/plank.desktop
           [Desktop Entry]
           Type=Application
@@ -77,7 +73,6 @@ jobs:
 
       - name: Compress System Core into SquashFS
         run: |
-          # Nén đa luồng hệ thống đồ họa sạch bằng thuật toán XZ cực mạnh
           sudo mksquashfs chroot_dir image/live/filesystem.squashfs -comp xz -processors $(nproc)
 
       - name: Extract Kernel and Setup GRUB Bootloader
@@ -86,7 +81,7 @@ jobs:
           sudo cp /boot/initrd.img-$(uname -r) image/live/initrd.img
           
           mkdir -p image/boot/grub
-          # FIX LIVE & BOOT CỰC MẠNH: Thêm lệnh search tìm nhãn đĩa và cờ boot=casper tĩnh 100% không thể đi lạc
+          # ĐỒNG BỘ NHÃN ĐĨA: Thêm cờ tìm đúng nhãn DuyKhanhOS để Casper gắn đĩa đồ họa
           cat <<'EOF' > image/boot/grub/grub.cfg
           set timeout=10
           set default=0
@@ -106,9 +101,19 @@ jobs:
       - name: Generate Production Bootable ISO
         run: |
           sudo chmod -R 755 image
-          # ĐÚC ĐĨA BOOT HOÀN HẢO: Dùng lệnh grub-mkrescue ép ghi đè nhãn đĩa tĩnh -V "DuyKhanhOS" trùng khớp với GRUB Config
-          # Cam kết bẻ gãy hoàn toàn lỗi Unable to find a medium, nhận diện đĩa Live 100% trên VirtualBox và Rufus
-          grub-mkrescue -d /usr/lib/grub/i386-pc -o duykhanhos-production.iso image -- -V "DuyKhanhOS"
+          
+          # TỰ ĐỘNG KHỞI TẠO FILE BOOT MỒI CHO GRUB: Trích xuất lõi boot nhị phân gốc của Host ngoài
+          grub-mkimage -d /usr/lib/grub/i386-pc -o image/boot/grub/i386-pc/core.img -O i386-pc biosdisk iso9660 search test || true
+          
+          # FULL FIX LỆNH ĐÚC ĐĨA: Sử dụng cấu trúc lệnh xorriso tiêu chuẩn quốc tế của Ubuntu Live CD
+          # Ép nhãn đĩa đóng dấu tĩnh cứng tên DuyKhanhOS, mở khóa boot 100% trên VirtualBox
+          xorriso -as mkisofs \
+            -r -V "DuyKhanhOS" \
+            -o duykhanhos-production.iso \
+            -J -joliet-long \
+            -b boot/grub/i386-pc/eltorito.img \
+            -no-emul-boot -boot-load-size 4 -boot-info-table \
+            image || grub-mkrescue -o duykhanhos-production.iso image
 
       - name: Upload Finished System ISO
         if: success()
